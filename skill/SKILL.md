@@ -36,7 +36,8 @@ Each card is one thing:
 - At the bottom, what the user can do:
   - an ask: option buttons and **Send**, your recommended option already picked;
   - a result: what to look at (a link that opens, or a path that copies) and **Seen**;
-  - returned work: its conclusion in one line and **Seen**.
+  - returned work: its conclusion in one line and **Seen**;
+  - on each of these, **Discuss**, when the user wants to talk the card over with you first (see "Messages from the inbox").
 
 Tapping the title opens the card: the full question, why it needs deciding now, what each option does, and a reply box. Permission requests and failed turns are filed by the host as their own cards; they are not yours to file.
 
@@ -97,7 +98,7 @@ A result's `label` is the card title; `look` says what to check there (22 wide),
 
 ## Messages from the inbox
 
-When the user acts on a card in the inbox, your session receives a user message. The examples are the default English set; with `AGENT_INBOX_LANG=zh` on the daemon the same messages come in Chinese.
+When the user acts on a card in the inbox, your session receives a user message. The examples are the default English set; with `AGENT_INBOX_LANG=zh` on the daemon (or `"lang": "zh"` in its settings file) the same messages come in Chinese.
 
 **Send on an ask:**
 
@@ -127,6 +128,14 @@ Act on the answer and the reply. That card is closed already; no `queue_resolve`
 The user closed the card without answering. Do not stop and wait: go on with your own best judgement, and file a new card only for what truly cannot go on without the user.
 
 **Seen** on a result or returned work, and **Dismiss** on any card that is not an ask, close the card without sending anything.
+
+**Discuss** on an ask:
+
+```
+(From the inbox: I'd like to talk about "Docs site: ship the new navigation?" before deciding. In a few plain sentences, explain where it came from and the trade-offs of each option, then wait for me.)
+```
+
+On a result or returned work the message names it and asks only where it came from. The user wants to talk the card over before acting on it, and has just opened your session to do so. Explain in a few plain sentences, as to someone who has forgotten this work: what the card is about and how it came up, and for a question what each option means and costs. Then stop and wait for the user; do not decide or act yet. The card stays open, tagged Discussing in the inbox. Once the user decides in the conversation, act on it and close the card with `queue_resolve`.
 
 Cards from before one card held one thing may hold several items; messages from those list one line per question (with ids such as `q1`) and a line for the questions left unanswered.
 

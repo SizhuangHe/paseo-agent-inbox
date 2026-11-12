@@ -510,6 +510,40 @@ describe("snooze and done", () => {
   });
 });
 
+describe("discussing", () => {
+  it("tags an open card once, keeping its place and updatedAt; the tag survives the same line filed again", () => {
+    const c = clock();
+    const q = queue(c);
+    const first = one(q.add(A, SNAP, card({ ask: ASK })));
+    const other = one(q.add(A, SNAP, card({ result: { label: "page" } })));
+    assert.equal(first.discussingAt, null);
+    c.advance(60_000);
+    const tagged = q.markDiscussing(first.id);
+    assert.equal(tagged.discussingAt, "2026-11-11T20:01:00.000Z");
+    assert.equal(tagged.state, "open");
+    assert.equal(tagged.updatedAt, first.updatedAt);
+    assert.equal(tagged.firstReadyAt, first.firstReadyAt);
+    c.advance(60_000);
+    assert.equal(q.markDiscussing(first.id).discussingAt, "2026-11-11T20:01:00.000Z", "only the first time counts");
+    assert.deepEqual(q.openCards(A).map((x) => x.id), [first.id, other.id]);
+    const refiled = one(q.add(A, SNAP, card({ ask: { ...ASK, question: "Collapse long lists, or cut them at 100?" } })));
+    assert.equal(refiled.id, first.id);
+    assert.equal(refiled.discussingAt, "2026-11-11T20:01:00.000Z");
+    assert.equal(q.get(other.id)?.discussingAt, null);
+  });
+
+  it("leaves a closed card as it is, and a replacing card starts untagged", () => {
+    const q = queue();
+    const first = one(q.add(A, SNAP, card({ ask: ASK })));
+    q.markDiscussing(first.id);
+    const next = one(q.add(A, SNAP, card({ ask: { ...ASK, short: "Docs nav: collapse or paginate?" }, replaces: first.id })));
+    assert.equal(next.discussingAt, null);
+    const closed = q.handBack(next.id);
+    assert.deepEqual(q.markDiscussing(next.id), closed);
+    assert.throws(() => q.markDiscussing("c-missing"), /unknown card/);
+  });
+});
+
 describe("tracks", () => {
   it("track then return files a receipt card for the parent, under its last topic", () => {
     const q = queue();
@@ -656,7 +690,7 @@ describe("migrations", () => {
     new Queue({ path }).close();
     const raw = new DatabaseSync(path);
     raw.exec(
-      "DROP INDEX cards_by_session; ALTER TABLE cards DROP COLUMN superseded_by; ALTER TABLE cards DROP COLUMN agent; ALTER TABLE cards DROP COLUMN timeline; ALTER TABLE cards DROP COLUMN topic; PRAGMA user_version = 1;",
+      "DROP INDEX cards_by_session; ALTER TABLE cards DROP COLUMN discussing_at; ALTER TABLE cards DROP COLUMN superseded_by; ALTER TABLE cards DROP COLUMN agent; ALTER TABLE cards DROP COLUMN timeline; ALTER TABLE cards DROP COLUMN topic; PRAGMA user_version = 1;",
     );
     raw
       .prepare(
@@ -670,7 +704,7 @@ describe("migrations", () => {
     assert.equal(q.get("c-v1")?.action, "See results");
     assert.equal(one(q.add(A, SNAP, card({ topic: "Added topic", ask: ASK }))).topic, "Added topic");
     q.close();
-    assert.equal(version(path), 6);
+    assert.equal(version(path), 7);
   });
 
   it("version 6 lets a session hold several open cards, adds superseded_by, and leaves existing cards as they are", () => {
@@ -678,7 +712,7 @@ describe("migrations", () => {
     new Queue({ path }).close();
     // A version 5 file as the code before one-card-per-item wrote it.
     const raw = new DatabaseSync(path);
-    raw.exec(`DROP INDEX cards_by_session; ALTER TABLE cards DROP COLUMN superseded_by;
+    raw.exec(`DROP INDEX cards_by_session; ALTER TABLE cards DROP COLUMN discussing_at; ALTER TABLE cards DROP COLUMN superseded_by;
       CREATE UNIQUE INDEX cards_one_open_per_session ON cards (host, session_id) WHERE state = 'open';
       PRAGMA user_version = 5;`);
     raw.close();
@@ -691,10 +725,12 @@ describe("migrations", () => {
     };
     const before = rawRow();
     const q = new Queue({ path });
-    assert.equal(version(path), 6);
+    assert.equal(version(path), 7);
     const after = rawRow();
     assert.equal(after.superseded_by, null);
+    assert.equal(after.discussing_at, null);
     delete after.superseded_by;
+    delete after.discussing_at;
     assert.deepEqual(after, before, "the older card is not migrated or split");
     one(q.add(A, SNAP, card({ ask: ASK })));
     one(q.add(A, SNAP, card({ result: { label: "page" } })));
@@ -704,6 +740,21 @@ describe("migrations", () => {
     indexes.close();
     assert.ok(!names.includes("cards_one_open_per_session"));
     assert.ok(names.includes("cards_by_session"));
+    q.close();
+  });
+
+  it("version 7 adds discussing_at, null on existing cards", () => {
+    const path = tempPath();
+    new Queue({ path }).close();
+    // A version 6 file as the code before Discuss wrote it.
+    const raw = new DatabaseSync(path);
+    raw.exec("ALTER TABLE cards DROP COLUMN discussing_at; PRAGMA user_version = 6;");
+    raw.close();
+    const id = insertLegacy(path, A, { asks: [{ id: "q1", question: "Q1?", resolved: false }] });
+    const q = new Queue({ path });
+    assert.equal(version(path), 7);
+    assert.equal(q.get(id)?.discussingAt, null);
+    assert.ok(q.markDiscussing(id).discussingAt);
     q.close();
   });
 
@@ -740,7 +791,7 @@ describe("migrations", () => {
     const { path, openId, doneId } = versionTwoDb();
     const q = new Queue({ path });
     q.close();
-    assert.equal(version(path), 6);
+    assert.equal(version(path), 7);
     const raw = new DatabaseSync(path);
     for (const id of [openId, doneId]) {
       const row = raw.prepare("SELECT * FROM cards WHERE id = ?").get(id) as Record<string, string>;
@@ -929,7 +980,7 @@ describe("recall-first fields", () => {
     new Queue({ path }).close();
     // A version 3 file as the code before timelines wrote it: no timeline column, old-style items.
     const raw = new DatabaseSync(path);
-    raw.exec("DROP INDEX cards_by_session; ALTER TABLE cards DROP COLUMN superseded_by; ALTER TABLE cards DROP COLUMN agent; ALTER TABLE cards DROP COLUMN timeline; PRAGMA user_version = 3;");
+    raw.exec("DROP INDEX cards_by_session; ALTER TABLE cards DROP COLUMN discussing_at; ALTER TABLE cards DROP COLUMN superseded_by; ALTER TABLE cards DROP COLUMN agent; ALTER TABLE cards DROP COLUMN timeline; PRAGMA user_version = 3;");
     raw
       .prepare(
         `INSERT INTO cards (id, host, session_id, action, summary, context, asks, results, receipts, state, first_ready_at, created_at, updated_at, topic)
@@ -947,6 +998,7 @@ describe("recall-first fields", () => {
     assert.equal(old.topic, null);
     assert.equal(old.agent, null);
     assert.equal(old.supersededBy, null);
+    assert.equal(old.discussingAt, null);
     assert.deepEqual(old.asks.map((a) => [a.id, a.short, a.options, a.recommendation]), [["q1", undefined, undefined, "Collapse"], ["perm:1", undefined, undefined, undefined]]);
     assert.equal(old.results[0].look, undefined);
     assert.equal(old.receipts[0].line, undefined);

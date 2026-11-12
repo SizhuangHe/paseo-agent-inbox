@@ -102,6 +102,9 @@ const MIGRATIONS: readonly Migration[] = [
   `DROP INDEX IF EXISTS cards_one_open_per_session;
    CREATE INDEX IF NOT EXISTS cards_by_session ON cards (host, session_id, state);
    ALTER TABLE cards ADD COLUMN superseded_by TEXT;`,
+  // 7: when the user pressed Discuss on a card, null otherwise. A nullable column, like timeline:
+  // older code ignores it, its updates leave it as it is and its inserts leave it null.
+  `ALTER TABLE cards ADD COLUMN discussing_at TEXT;`,
 ];
 
 interface CardRow {
@@ -128,6 +131,7 @@ interface CardRow {
   done_at: string | null;
   done_by: DoneBy | null;
   superseded_by: string | null;
+  discussing_at: string | null;
 }
 
 interface TrackRow {
@@ -166,6 +170,7 @@ function toCard(row: CardRow): Card {
     doneAt: row.done_at,
     doneBy: row.done_by,
     supersededBy: row.superseded_by ?? null,
+    discussingAt: row.discussing_at ?? null,
   };
 }
 
@@ -463,6 +468,20 @@ export class Queue {
       if (card.state === "done") return card;
       const now = this.#stamp();
       this.#writeCard({ ...card, state: "done", doneAt: now, doneBy: by, updatedAt: now });
+      return this.#card(cardId);
+    });
+  }
+
+  /**
+   * Discuss: tags an open card with the time the user asked its session to talk it over. Only the first
+   * time counts; a closed card is left as it is. The card keeps its place, and `updatedAt` stays, since
+   * nothing in it changed.
+   */
+  markDiscussing(cardId: string): Card {
+    return this.#tx(() => {
+      const card = this.#card(cardId);
+      if (card.state !== "open" || card.discussingAt) return card;
+      this.#db.prepare("UPDATE cards SET discussing_at = ? WHERE id = ?").run(this.#stamp(), cardId);
       return this.#card(cardId);
     });
   }

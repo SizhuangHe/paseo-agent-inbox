@@ -4,7 +4,7 @@ import { copyText, Loading, ScrollView, SidebarRow, useToast } from "@getpaseo/p
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Text, View, type ScrollView as NativeScrollView } from "react-native";
-import { externalSessionUrl, type Picks } from "../shared/cards";
+import { discussMode, externalSessionUrl, type Picks } from "../shared/cards";
 import { clientCopyDeps, copyWithFallback } from "../shared/clipboard";
 import {
   answerPermission,
@@ -12,6 +12,7 @@ import {
   markCardDone,
   sendAnswers,
   snoozeCard,
+  startDiscussion,
   type PermissionAnswer,
   type QueueAsk,
   type QueueCard,
@@ -50,6 +51,7 @@ export function QueueScreen({ theme, layout, navigation }: PluginScreenProps) {
   const done = useRpc(markCardDone);
   const answer = useRpc(sendAnswers);
   const respond = useRpc(answerPermission);
+  const startDiscuss = useRpc(startDiscussion);
   const [permissionStates, setPermissionStates] = useState<Record<string, PermissionState>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const scroll = useRef<NativeScrollView>(null);
@@ -116,6 +118,24 @@ export function QueueScreen({ theme, layout, navigation }: PluginScreenProps) {
     void openExternalUrl(url).catch((error: unknown) => toast.error(String(error)));
   };
 
+  // Discuss on a Paseo card: one message asks the session to talk the card over, then the session opens
+  // and the card shows Discussing. If the message fails, the error shows and the session stays closed.
+  // On another host's card it only opens the session page.
+  const discuss = useMutation({
+    mutationFn: ({ card }: { card: QueueCard }) => startDiscuss({ cardId: card.id }),
+    onSuccess: (_result, { card }) => {
+      openAgent?.({ agentId: card.sessionId });
+      return queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+  });
+  const canDiscuss = (card: QueueCard) => discussMode(card, externalUrl) !== null;
+  const onDiscuss = (card: QueueCard) => {
+    const mode = discussMode(card, externalUrl);
+    if (mode === "send") discuss.mutate({ card });
+    else if (mode === "open") onOpenSession(card);
+  };
+
   const onOpenUrl = (url: string) => {
     if (!isOpenableUrl(url)) return;
     void openExternalUrl(url).catch((error: unknown) => toast.error(String(error)));
@@ -150,6 +170,8 @@ export function QueueScreen({ theme, layout, navigation }: PluginScreenProps) {
         onSelect={setSelectedId}
         onOpenSession={onOpenSession}
         canOpenSession={canOpenSession}
+        onDiscuss={onDiscuss}
+        canDiscuss={canDiscuss}
         onSnooze={(card) => settle.mutate({ card, kind: "snooze" })}
         onDone={(card) => settle.mutate({ card, kind: "done" })}
         onAnswer={(card, picks, reply) => send.mutate({ card, picks, reply })}
@@ -158,7 +180,13 @@ export function QueueScreen({ theme, layout, navigation }: PluginScreenProps) {
         onOpenUrl={onOpenUrl}
         onCopyPath={onCopyPath}
         busyCardId={
-          settle.isPending ? settle.variables?.card.id ?? null : send.isPending ? send.variables?.card.id ?? null : null
+          settle.isPending
+            ? settle.variables?.card.id ?? null
+            : send.isPending
+            ? send.variables?.card.id ?? null
+            : discuss.isPending
+            ? discuss.variables?.card.id ?? null
+            : null
         }
       />
     </ScrollView>

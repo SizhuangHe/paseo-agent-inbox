@@ -4,7 +4,7 @@
 // with several items send every pick at once and close with all of them (open permission requests excepted).
 import { QueueInputError } from "agent-inbox-core";
 import type { Card, Queue } from "agent-inbox-core";
-import { askChoices, askKind, composeAnswerMessage, composeSkipMessage, type Picks } from "../shared/cards.ts";
+import { askChoices, askKind, composeAnswerMessage, composeDiscussMessage, composeSkipMessage, type Picks } from "../shared/cards.ts";
 import type { MessageLang } from "../shared/messages.ts";
 
 export interface AnswerDeps {
@@ -58,4 +58,22 @@ export async function dismissCard(deps: AnswerDeps, cardId: string): Promise<Car
   if (message) await deps.send(card.sessionId, message);
   const now = deps.queue.get(cardId);
   return now && now.state === "open" ? deps.queue.handBack(cardId) : (now ?? card);
+}
+
+/**
+ * Discuss: the user wants to talk the card over in its session first. One message asks the agent to
+ * explain it in plain words and wait; then the card is tagged `discussingAt` and stays open (the agent
+ * closes it once the user decides there). On a card already tagged nothing is sent again. If the send
+ * fails, the error propagates and the card stays untagged. `sent` says whether a message went out.
+ */
+export async function discussCard(deps: AnswerDeps, cardId: string): Promise<{ card: Card; sent: boolean }> {
+  const card = deps.queue.get(cardId);
+  if (!card) throw new QueueInputError([`unknown card ${cardId}`]);
+  if (card.state !== "open") throw new QueueInputError(["This card is already closed"]);
+  if (card.host !== "paseo") throw new QueueInputError(["Only Paseo cards can be discussed from the inbox; open the session"]);
+  const message = composeDiscussMessage(card, deps.lang);
+  if (message === null) throw new QueueInputError(["Permission requests, failed turns and older cards have no Discuss"]);
+  if (card.discussingAt) return { card, sent: false };
+  await deps.send(card.sessionId, message);
+  return { card: deps.queue.markDiscussing(cardId), sent: true };
 }

@@ -3,24 +3,36 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { Queue, QueueInputError } from "agent-inbox-core";
-import { answerCard, dismissCard } from "./server/answer";
+import { answerCard, discussCard, dismissCard } from "./server/answer";
 import { onPermissionAfter, onPermissionBefore, onTurnAfter } from "./server/hooks";
 import { QueueMcpServer } from "./server/mcp";
 import { answerPermission as answerPermissionRequest } from "./server/permissions";
 import { TitleCache } from "./server/session";
-import { readSettings } from "./server/settings";
+import { readConfigFile, readSettings, type InboxSettings } from "./server/settings";
 import { createQueueTools } from "./server/tools";
 import { trackParents } from "./shared/agent-line";
-import { answerPermission, listQueue, markCardDone, sendAnswers, snoozeCard } from "./shared/rpc";
+import { answerPermission, listQueue, markCardDone, sendAnswers, snoozeCard, startDiscussion } from "./shared/rpc";
 
 // The tools reach agents as mcp__agent-queue__queue_add and so on: keep this name stable.
 const MCP_SERVER_NAME = "agent-queue";
 
 export default function contribute(server: PluginServerContext) {
-  const settings = readSettings();
-  if (settings.invalidExternalUrl) {
-    console.error(`[agent-queue] AGENT_INBOX_EXTERNAL_URL is not an http(s) URL; ignored: ${settings.invalidExternalUrl}`);
-  }
+  // Settings are read on each use, so an edit to the settings file applies without a reload. Each
+  // problem with them is logged once.
+  const reported = new Set<string>();
+  const report = (problem: string) => {
+    if (reported.has(problem)) return;
+    reported.add(problem);
+    console.error(`[agent-queue] ${problem}`);
+  };
+  const settings = (): InboxSettings => {
+    const file = readConfigFile();
+    if (file.error) report(`settings file ignored: ${file.error}`);
+    const current = readSettings(process.env, file.config);
+    if (current.invalidExternalUrl) report(`the external session URL is not an http(s) URL; ignored: ${current.invalidExternalUrl}`);
+    return current;
+  };
+  settings();
   let queue: Queue | null = null;
   const getQueue = () => (queue ??= new Queue());
   let paseo: PaseoApi | null = null;
@@ -70,7 +82,7 @@ export default function contribute(server: PluginServerContext) {
       const title = store.sessionTopic({ host: "paseo", sessionId: id }) ?? known.get(id) ?? (await titles.get(context.paseo, id));
       if (title) sessionTitles[id] = title;
     }
-    return { now: new Date().toISOString(), cards, tracks, sessionTitles, childOf, home: homedir(), externalUrl: settings.externalUrl };
+    return { now: new Date().toISOString(), cards, tracks, sessionTitles, childOf, home: homedir(), externalUrl: settings().externalUrl };
   });
   server.handle(snoozeCard, ({ cardId }) => ({ card: getQueue().snooze(cardId) }));
   // "steer" hands a busy session a message inside its running turn instead of interrupting it.
@@ -86,13 +98,17 @@ export default function contribute(server: PluginServerContext) {
   };
   server.handle(markCardDone, ({ cardId }, context) => {
     paseo ??= context.paseo;
-    return plainErrors(async () => ({ card: await dismissCard({ queue: getQueue(), send: sender(context.paseo), lang: settings.lang }, cardId) }));
+    return plainErrors(async () => ({ card: await dismissCard({ queue: getQueue(), send: sender(context.paseo), lang: settings().lang }, cardId) }));
   });
   server.handle(sendAnswers, ({ cardId, picks, reply }, context) => {
     paseo ??= context.paseo;
     return plainErrors(async () => ({
-      card: await answerCard({ queue: getQueue(), send: sender(context.paseo), lang: settings.lang }, cardId, picks, reply ?? ""),
+      card: await answerCard({ queue: getQueue(), send: sender(context.paseo), lang: settings().lang }, cardId, picks, reply ?? ""),
     }));
+  });
+  server.handle(startDiscussion, ({ cardId }, context) => {
+    paseo ??= context.paseo;
+    return plainErrors(() => discussCard({ queue: getQueue(), send: sender(context.paseo), lang: settings().lang }, cardId));
   });
   server.handle(answerPermission, ({ cardId, askId, answer }, context) => {
     paseo ??= context.paseo;

@@ -1,6 +1,7 @@
 // Renders QueueView (the real component) with react-native-web, for headless screenshots.
 import { createRoot } from "react-dom/client";
 import { QueueView, type QueueData } from "../paseo-plugin/client/queue-view";
+import { discussMode } from "../paseo-plugin/shared/cards";
 
 declare const QUEUE_DATA: QueueData;
 declare const document: { getElementById(id: string): unknown; body: { style: Record<string, string> } };
@@ -36,7 +37,7 @@ const THEMES = {
 // shows a permission ask (of the open card unless named) as answered (allowed, denied, sent, stale) or busy;
 // &copy=fail makes copying a path fail, as over plain http without the textarea fallback;
 // &revealed=<cardId> starts that card with its path shown, as after a failed copy;
-// &external=1 shows Open session on cards from an external host, as when AGENT_INBOX_EXTERNAL_URL is set.
+// &external=1 shows Open session and Discuss on cards from an external host, as when AGENT_INBOX_EXTERNAL_URL is set.
 const params = new URLSearchParams(location.search);
 const card = params.get("card");
 const expand = params.get("expand");
@@ -60,6 +61,8 @@ createRoot(document.getElementById("root") as never).render(
     onSelect={() => {}}
     onOpenSession={() => {}}
     canOpenSession={(item) => item.host === "paseo" || params.get("external") === "1"}
+    onDiscuss={record("discuss")}
+    canDiscuss={(item) => discussMode(item, params.get("external") === "1" ? "https://agents.example.com/s/{session}" : null) !== null}
     onSnooze={record("snooze")}
     onDone={record("done")}
     onAnswer={record("answer")}

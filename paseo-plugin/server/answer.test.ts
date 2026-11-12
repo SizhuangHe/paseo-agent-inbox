@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { Queue } from "agent-inbox-core";
-import { askKind, composeAnswerMessage, composeSkipMessage, screenOrder, singleItem } from "../shared/cards.ts";
+import { askKind, composeAnswerMessage, composeDiscussMessage, composeSkipMessage, discussMode, screenOrder, singleItem } from "../shared/cards.ts";
 import { messageLang } from "../shared/messages.ts";
-import { answerCard, dismissCard } from "./answer.ts";
+import { answerCard, discussCard, dismissCard } from "./answer.ts";
 
 const A = { host: "paseo", sessionId: "agent-a" } as const;
 
@@ -494,6 +494,140 @@ describe("Chinese messages (AGENT_INBOX_LANG=zh)", () => {
       [
         "（从队列回答「Docs redesign」的问题，这张卡已关闭）\nDocs site: ship the new navigation?→ Ship to all",
         "（从队列跳过「Docs redesign」的问题：Docs site: delete old preview builds?先不用等我；真需要我定，下次单独问。）",
+      ],
+    );
+  });
+});
+
+describe("discussCard", () => {
+  const ASK_EN =
+    '(From the inbox: I\'d like to talk about "Docs site: ship the new navigation?" before deciding. ' +
+    "In a few plain sentences, explain where it came from and the trade-offs of each option, then wait for me.)";
+
+  /** The docs fixture plus a receipt card, a permission card, an error card and an external host's card. */
+  function discussFixture() {
+    const base = fixture();
+    const { queue } = base;
+    const receipt = queue.add(A, {}, { topic: "Docs redesign", timeline: TIMELINE, receipt: { title: "Link check", status: "returned", conclusion: "Done." } })
+      .cards[0].card;
+    const perm = queue.addSystemAsk(A, {}, { id: "perm:r1", question: "Permission: Bash" }, { action: "x", summary: "y", context: "z" });
+    const error = queue.addSystemAsk(A, {}, { id: "err:t1", question: "Error: overloaded" }, { action: "x", summary: "y", context: "z" });
+    const external = queue.add({ host: "dsh", sessionId: "s1" }, {}, { topic: "Other host", timeline: TIMELINE, ask: { question: "Q?", options: [{ label: "Yes" }] } })
+      .cards[0].card;
+    return { ...base, receipt, perm, error, external };
+  }
+
+  it("on an ask card, sends the ask message into its session, tags the card and leaves it open", async () => {
+    const { queue, ship, cleanup, page } = discussFixture();
+    const fake = fakeSend();
+    const { card, sent } = await discussCard({ queue, send: fake.send }, ship.id);
+    assert.deepEqual(fake.sent, [{ sessionId: "agent-a", text: ASK_EN }]);
+    assert.equal(sent, true);
+    assert.equal(card.state, "open");
+    assert.ok(card.discussingAt);
+    assert.equal(card.asks[0].resolved, false);
+    assert.deepEqual(queue.get(ship.id), card);
+    assert.deepEqual(
+      queue.openCards(A).filter((c) => c.host === "paseo" && c.discussingAt).map((c) => c.id),
+      [ship.id],
+      "only that card is tagged",
+    );
+    assert.ok([cleanup.id, page.id].every((id) => queue.get(id)?.state === "open"));
+  });
+
+  it("sends the template for each card kind in English and Chinese", () => {
+    const { ship, page, receipt, queue } = discussFixture();
+    const old = queue.add(A, {}, { topic: "Docs redesign", timeline: TIMELINE, ask: { question: "Two lists on the changelog page show only the first 100 entries; collapse the rest?" } })
+      .cards[0].card;
+    assert.equal(composeDiscussMessage(ship), ASK_EN);
+    assert.equal(
+      composeDiscussMessage(page),
+      '(From the inbox: I\'d like to talk about "Before/after comparison page". In a few plain sentences, explain where it came from, then wait for me.)',
+    );
+    assert.equal(
+      composeDiscussMessage(receipt),
+      '(From the inbox: I\'d like to talk about "Link check". In a few plain sentences, explain where it came from, then wait for me.)',
+    );
+    assert.equal(composeDiscussMessage(ship, "zh"), "（从队列：想先聊聊「Docs site: ship the new navigation?」再定。用几句白话讲清来龙去脉和各选项的利弊，然后等我。）");
+    assert.equal(composeDiscussMessage(page, "zh"), "（从队列：想先聊聊「Before/after comparison page」。用几句白话讲清来龙去脉，然后等我。）");
+    assert.equal(composeDiscussMessage(receipt, "zh"), "（从队列：想先聊聊「Link check」。用几句白话讲清来龙去脉，然后等我。）");
+    assert.equal(composeDiscussMessage(old, "zh"), `（从队列：想先聊聊「${Q3_CUT}」再定。用几句白话讲清来龙去脉和各选项的利弊，然后等我。）`, "an ask without short: its question cut to 40");
+  });
+
+  it("sends in the language the deps name", async () => {
+    const { queue, page } = discussFixture();
+    const fake = fakeSend();
+    await discussCard({ queue, send: fake.send, lang: "zh" }, page.id);
+    assert.deepEqual(fake.sent.map((m) => m.text), ["（从队列：想先聊聊「Before/after comparison page」。用几句白话讲清来龙去脉，然后等我。）"]);
+  });
+
+  it("on a card already discussing, sends nothing again and keeps the first time", async () => {
+    const { queue, receipt } = discussFixture();
+    const fake = fakeSend();
+    const first = await discussCard({ queue, send: fake.send }, receipt.id);
+    const second = await discussCard({ queue, send: fake.send }, receipt.id);
+    assert.equal(fake.sent.length, 1);
+    assert.equal(second.sent, false);
+    assert.equal(second.card.discussingAt, first.card.discussingAt);
+  });
+
+  it("leaves the card untagged when the send fails", async () => {
+    const { queue, ship } = discussFixture();
+    const failing = async () => {
+      throw new Error("session is gone");
+    };
+    await assert.rejects(discussCard({ queue, send: failing }, ship.id), /session is gone/);
+    assert.equal(queue.get(ship.id)?.discussingAt, null);
+    assert.equal(queue.get(ship.id)?.state, "open");
+  });
+
+  it("refuses permission, error, older multi-item, external-host and closed cards without sending", async () => {
+    const { queue, path, perm, error, external, cleanup } = discussFixture();
+    const fake = fakeSend();
+    const legacy = queue.get(insertLegacy(path));
+    assert.ok(legacy);
+    const reject = (cardId: string, pattern: RegExp) => assert.rejects(discussCard({ queue, send: fake.send }, cardId), pattern);
+    await reject(perm.id, /have no Discuss/);
+    await reject(error.id, /have no Discuss/);
+    await reject(legacy.id, /have no Discuss/);
+    await reject(external.id, /Only Paseo cards can be discussed/);
+    queue.done(cleanup.id, "user");
+    await reject(cleanup.id, /already closed/);
+    await reject("c-missing", /unknown card/);
+    assert.equal(fake.sent.length, 0);
+    assert.ok([perm, error, external, legacy].every((card) => queue.get(card.id)?.discussingAt === null));
+  });
+
+  it("shows Discuss on Paseo agent cards; not on permission, error or older cards; on another host's only with its page set", () => {
+    const { queue, path, ship, page, receipt, perm, error, external } = discussFixture();
+    const legacy = queue.get(insertLegacy(path));
+    assert.ok(legacy);
+    for (const card of [ship, page, receipt]) {
+      assert.equal(discussMode(card, null), "send", card.id);
+      assert.equal(discussMode(card, "https://agents.example.com/s/{session}"), "send", card.id);
+    }
+    for (const card of [perm, error, legacy]) {
+      assert.equal(discussMode(card, null), null, card.id);
+      assert.equal(discussMode(card, "https://agents.example.com/s/{session}"), null, card.id);
+    }
+    assert.equal(discussMode(external, null), null);
+    assert.equal(discussMode(external, "https://agents.example.com/s/{session}"), "open");
+  });
+
+  it("a card under discussion can still be sent, seen and dismissed", async () => {
+    const { queue, ship, cleanup, page } = discussFixture();
+    const fake = fakeSend();
+    for (const card of [ship, cleanup, page]) await discussCard({ queue, send: fake.send }, card.id);
+    fake.sent.length = 0;
+    const answered = await answerCard({ queue, send: fake.send }, ship.id, { q1: 1 });
+    const dismissed = await dismissCard({ queue, send: fake.send }, cleanup.id);
+    const seen = await dismissCard({ queue, send: fake.send }, page.id);
+    assert.deepEqual([answered, dismissed, seen].map((card) => [card.state, card.doneBy]), [["done", "user"], ["done", "user"], ["done", "user"]]);
+    assert.deepEqual(
+      fake.sent.map((m) => m.text),
+      [
+        composeAnswerMessage(ship, { q1: 1 }),
+        "(Skipped in the inbox, a question in \"Docs redesign\": Docs site: delete old preview builds? Don't wait for me; if you really need my decision, ask again separately.)",
       ],
     );
   });

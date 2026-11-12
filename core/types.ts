@@ -167,6 +167,11 @@ export interface Card {
   doneBy: DoneBy | null;
   /** The card a `replaces` filing put in this one's place; null unless this card was superseded. */
   supersededBy: string | null;
+  /**
+   * When the user pressed Discuss on the card (the session was asked to talk it over); null otherwise.
+   * The card stays open until the session closes it or the user sends, sees or dismisses it.
+   */
+  discussingAt: string | null;
 }
 
 export interface Track {

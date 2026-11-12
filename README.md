@@ -12,6 +12,7 @@ A [Paseo](https://paseo.sh) plugin that gives you one inbox for everything your 
 - A per-card recall in three steps: **You asked** → **It did** → **Blocked**.
 - Answer on the card: tap an option (the agent's recommendation is preselected), add a reply, **Send**. Permission requests are answered with the same buttons Paseo shows.
 - **Seen** closes results and returned work; **Dismiss** tells the agent not to wait for an answer; **Later** moves a card to the end.
+- **Discuss** asks the card's session to explain it in a few plain sentences and wait, then opens the session; the card stays open, tagged *Discussing*, until the agent closes it once you decide there.
 - Cards grouped by session, with child sessions nested under the session that started them.
 - A **Running** list of dispatched work; when a tracked `paseo run` child finishes, its result is filed automatically.
 - Works on desktop and phone, in Paseo's light and dark themes.
@@ -77,14 +78,14 @@ bin/agent-queue --help                    # every command
 
 ## Settings
 
-All are environment variables. The plugin reads them from the environment the Paseo daemon starts with.
+Environment variables, which the plugin reads from the environment the Paseo daemon starts with. The message language and the external session page can also be set in `~/.config/agent-inbox/config.json` (file key below), for example `{"lang": "zh"}`; an environment variable that is set wins over the file. The plugin reads the file each time it needs it, so an edit applies without a reload.
 
-| Variable | Default | Effect |
-|---|---|---|
-| `AGENT_QUEUE_DB` | `~/.local/share/agent-queue/queue.db` | Database file, for the plugin and the CLI (the CLI also takes `--db`). |
-| `AGENT_INBOX_LANG` | English | `zh` sends the messages that go into sessions (Send, Dismiss) in Chinese. |
-| `AGENT_INBOX_EXTERNAL_URL` | unset | The http(s) page **Open session** opens for cards from another host; `{session}` stands for the session id. Without it, those cards have no Open session button. |
-| `AGENT_QUEUE_SESSION` | set by the plugin | `<host>:<session id>`. The plugin sets it to `paseo:<agent id>` in every session; set it yourself for other hosts. |
+| Variable | File key | Default | Effect |
+|---|---|---|---|
+| `AGENT_QUEUE_DB` | | `~/.local/share/agent-queue/queue.db` | Database file, for the plugin and the CLI (the CLI also takes `--db`). |
+| `AGENT_INBOX_LANG` | `lang` | English | `zh` sends the messages that go into sessions (Send, Dismiss, Discuss) in Chinese. |
+| `AGENT_INBOX_EXTERNAL_URL` | `externalUrl` | unset | The http(s) page **Open session** and **Discuss** open for cards from another host (Discuss sends nothing there); `{session}` stands for the session id. Without it, those cards have neither button. |
+| `AGENT_QUEUE_SESSION` | | set by the plugin | `<host>:<session id>`. The plugin sets it to `paseo:<agent id>` in every session; set it yourself for other hosts. |
 
 ## Where data lives
 
@@ -111,7 +112,7 @@ Query parameters: `compact=1`, `theme=light`, `card=<id>` (detail), `running=1`,
 
 ## Limitations
 
-- The inbox shows only in Paseo. Other hosts file through the CLI, cannot be answered from the inbox, and get an Open session button only with `AGENT_INBOX_EXTERNAL_URL`.
+- The inbox shows only in Paseo. Other hosts file through the CLI, cannot be answered from the inbox, and get Open session and Discuss buttons (which only open their page) only with an external session URL.
 - Work Paseo cannot see, such as a coding agent's in-process subagents, is not reported automatically: the agent files the receipt itself.
 - No notifications beyond the sidebar count; the screen polls every 5 seconds.
 - Card fields have width limits sized for a phone screen; `topic` is at most 15 characters.

@@ -9,7 +9,7 @@ import { Icon, TextInput } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View, type PressableStateCallbackType, type TextStyle, type ViewStyle } from "react-native";
 import { agentLine } from "../shared/agent-line";
-import { askChoices, askKind, questionLine, recommendedChoice, singleItem, type Picks } from "../shared/cards";
+import { askChoices, askKind, discussLine, questionLine, recommendedChoice, singleItem, type Picks } from "../shared/cards";
 import { groupSessions, latestCard, type SessionGroup } from "../shared/groups";
 import type { PermissionAnswer, PermissionOutcome, QueueAsk, QueueCard, QueueTrack } from "../shared/rpc";
 import {
@@ -53,6 +53,10 @@ export interface QueueViewProps {
   onOpenSession: ((card: QueueCard) => void) | null;
   /** Whether a card's session can be opened (e.g. an external host with no URL set); all can when left out. */
   canOpenSession?: (card: QueueCard) => boolean;
+  /** Discuss: asks the session to talk the card over, then opens it. Null hides it. */
+  onDiscuss?: ((card: QueueCard) => void) | null;
+  /** Whether an agent card has Discuss (e.g. not on an external host with no URL set); all can when left out. */
+  canDiscuss?: (card: QueueCard) => boolean;
   onSnooze(card: QueueCard): void;
   /** Seen and Dismiss: closes the card (Dismiss on an open ask first tells the session it was skipped). */
   onDone(card: QueueCard): void;
@@ -83,6 +87,13 @@ function sessionOpener(props: Pick<QueueViewProps, "onOpenSession" | "canOpenSes
   const open = props.onOpenSession;
   if (!open || props.canOpenSession?.(card) === false) return null;
   return () => open(card);
+}
+
+/** Discuss on the card, or null when it has none: permission requests, failed turns, older cards, hosts it cannot reach. */
+function discusser(props: Pick<QueueViewProps, "onDiscuss" | "canDiscuss">, card: QueueCard): (() => void) | null {
+  const discuss = props.onDiscuss;
+  if (!discuss || discussLine(card) === null || props.canDiscuss?.(card) === false) return null;
+  return () => discuss(card);
 }
 
 const STEPS = ["You asked", "It did", "Blocked"] as const;
@@ -141,8 +152,13 @@ function useStyles(theme: PluginTheme, compact: boolean) {
           paddingTop: 11,
           paddingBottom: 12,
         },
+        itemHead: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
         itemTitle: { color: c.foreground, fontSize: 15, lineHeight: 21, fontWeight: "600" },
         itemActions: { flexDirection: "row", alignItems: "flex-end", gap: 10, marginTop: 10 },
+        itemButtons: { flexDirection: "row", gap: 6 },
+        // Discussing: a small muted tag
+        tag: { paddingHorizontal: 6, borderRadius: 5, borderWidth: hairline, borderColor: c.border, backgroundColor: c.surface2 },
+        tagText: { color: c.foregroundMuted, fontSize: 11, lineHeight: 17 },
         itemActionsMain: { flex: 1, minWidth: 0 },
         itemChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
         itemEffect: { color: c.foregroundMuted, fontSize: 12, lineHeight: 17, marginTop: 6 },
@@ -326,9 +342,10 @@ function useStyles(theme: PluginTheme, compact: boolean) {
           fontSize: 15,
           lineHeight: 21,
         },
-        // At 390 px the four footer buttons fit on one row only with the tighter phone spacing.
+        // At 390 px the footer buttons (up to Send, Seen, Discuss, Open session, Later) fit on one row
+        // only with the tighter phone spacing.
         footRight: { marginLeft: "auto" },
-        button: { height: 36, paddingHorizontal: compact ? 12 : 16, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+        button: { height: 36, paddingHorizontal: compact ? 10 : 16, borderRadius: 8, alignItems: "center", justifyContent: "center" },
         primary: { backgroundColor: c.foreground },
         primaryText: { color: c.surface0, fontSize: compact ? 13 : 14, fontWeight: "600" },
         secondary: { backgroundColor: c.surface2, borderWidth: hairline, borderColor: c.border },
@@ -496,6 +513,16 @@ function SmallButton(props: { label: string; kind: "primary" | "secondary"; disa
   );
 }
 
+/** The muted tag on a card the user asked its session to talk over. */
+function DiscussingTag({ card, s, style }: { card: QueueCard; s: Styles; style?: ViewStyle }) {
+  if (!card.discussingAt) return null;
+  return (
+    <View style={[s.tag, style]}>
+      <Text style={s.tagText}>Discussing</Text>
+    </View>
+  );
+}
+
 // ---- overview ---------------------------------------------------------------
 
 /** Per-card state the screen keeps (picks, a path shown after a failed copy) and the taps that change it. */
@@ -641,6 +668,8 @@ function ItemActions({ card, props, actions, s }: { card: QueueCard; props: Queu
   const kind = cardKind(card);
   const busy = props.busyCardId === card.id;
   const seen = <SmallButton label="Seen" kind="secondary" disabled={busy} onPress={() => props.onDone(card)} s={s} />;
+  const onDiscuss = discusser(props, card);
+  const discuss = onDiscuss ? <SmallButton label="Discuss" kind="secondary" disabled={busy} onPress={onDiscuss} s={s} /> : null;
   const ask = soleAsk(card);
 
   if (kind === "permission" && ask) {
@@ -664,7 +693,10 @@ function ItemActions({ card, props, actions, s }: { card: QueueCard; props: Queu
       return (
         <View style={s.itemActions}>
           <View style={s.itemActionsMain} />
-          <SmallButton label="Reply ›" kind="secondary" onPress={() => props.onSelect(card.id)} s={s} />
+          <View style={s.itemButtons}>
+            {discuss}
+            <SmallButton label="Reply ›" kind="secondary" onPress={() => props.onSelect(card.id)} s={s} />
+          </View>
         </View>
       );
     }
@@ -676,17 +708,20 @@ function ItemActions({ card, props, actions, s }: { card: QueueCard; props: Queu
           <ChoiceChips card={card} ask={ask} actions={actions} enabled={sendable && !busy} s={s} />
           {effect ? <Text style={s.itemEffect}>{effect}</Text> : null}
         </View>
-        {sendable ? (
-          <SmallButton
-            label="Send"
-            kind="primary"
-            disabled={busy || chosen === null}
-            onPress={() => {
-              if (chosen !== null) props.onAnswer?.(card, { [ask.id]: chosen }, "");
-            }}
-            s={s}
-          />
-        ) : null}
+        <View style={s.itemButtons}>
+          {discuss}
+          {sendable ? (
+            <SmallButton
+              label="Send"
+              kind="primary"
+              disabled={busy || chosen === null}
+              onPress={() => {
+                if (chosen !== null) props.onAnswer?.(card, { [ask.id]: chosen }, "");
+              }}
+              s={s}
+            />
+          ) : null}
+        </View>
       </View>
     );
   }
@@ -700,7 +735,10 @@ function ItemActions({ card, props, actions, s }: { card: QueueCard; props: Queu
           <View style={s.itemActionsMain}>
             <ResultLink card={card} actions={actions} props={props} s={s} />
           </View>
-          {seen}
+          <View style={s.itemButtons}>
+            {discuss}
+            {seen}
+          </View>
         </View>
         {path && actions.revealed(card) ? (
           <Text style={s.itemPath} selectable>
@@ -722,7 +760,10 @@ function ItemActions({ card, props, actions, s }: { card: QueueCard; props: Queu
           <Text style={{ color: failed ? theme.colors.statusDanger : theme.colors.statusSuccess }}>{failed ? "✕ " : "✓ "}</Text>
           {receipt.line ?? receipt.conclusion}
         </Text>
-        {seen}
+        <View style={s.itemButtons}>
+          {discuss}
+          {seen}
+        </View>
       </View>
     );
   }
@@ -751,11 +792,14 @@ function ItemCard({ card, props, actions, s }: { card: QueueCard; props: QueueVi
   const host = kind === "permission" || kind === "error";
   return (
     <View style={s.item}>
-      <Pressable accessibilityRole="button" onPress={() => props.onSelect(card.id)}>
-        <Text style={[s.itemTitle, host ? { color: statusColor(theme, cardStatus(card)) } : null]} numberOfLines={host ? 2 : undefined}>
-          {itemLine(card)}
-        </Text>
-      </Pressable>
+      <View style={s.itemHead}>
+        <Pressable accessibilityRole="button" onPress={() => props.onSelect(card.id)} style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[s.itemTitle, host ? { color: statusColor(theme, cardStatus(card)) } : null]} numberOfLines={host ? 2 : undefined}>
+            {itemLine(card)}
+          </Text>
+        </Pressable>
+        <DiscussingTag card={card} s={s} style={{ marginTop: 2 }} />
+      </View>
       {host || !card.timeline ? null : <Steps card={card} s={s} theme={theme} boxed={false} lines={2} />}
       <ItemActions card={card} props={props} actions={actions} s={s} />
     </View>
@@ -853,6 +897,7 @@ function ItemDetail(props: ItemDetailProps) {
   const ready = !busy && (chosen !== null || props.reply.trim() !== "");
   const picks: Picks = ask && chosen !== null ? { [ask.id]: chosen } : {};
   const onReply = sessionOpener(props, card);
+  const onDiscuss = discusser(props, card);
 
   let body: ReactNode = null;
   if (kind === "ask" && ask) {
@@ -954,7 +999,8 @@ function ItemDetail(props: ItemDetailProps) {
           <Text style={s.backChevron}>‹</Text>
           <Text style={s.backText}>Inbox</Text>
         </Pressable>
-        <Text style={s.topWaited}>{elapsed(card.firstReadyAt, nowMs)}</Text>
+        <DiscussingTag card={card} s={s} style={{ marginLeft: "auto", marginRight: 10 }} />
+        <Text style={[s.topWaited, card.discussingAt ? { marginLeft: 0 } : null]}>{elapsed(card.firstReadyAt, nowMs)}</Text>
       </View>
       <View style={s.detail}>
         <Text style={s.topic} numberOfLines={1}>
@@ -993,6 +1039,11 @@ function ItemDetail(props: ItemDetailProps) {
             {kind === "result" || kind === "receipt" || kind === "error" ? (
               <Pressable accessibilityRole="button" disabled={busy} onPress={() => props.onDone(card)} style={pressStyle([s.button, s.secondary], s.hover, s)}>
                 <Text style={s.secondaryText}>Seen</Text>
+              </Pressable>
+            ) : null}
+            {onDiscuss ? (
+              <Pressable accessibilityRole="button" disabled={busy} onPress={onDiscuss} style={pressStyle([s.button, s.secondary], s.hover, s)}>
+                <Text style={s.secondaryText}>Discuss</Text>
               </Pressable>
             ) : null}
             {onReply ? (

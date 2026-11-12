@@ -1,6 +1,7 @@
 // Card helpers shared by the inbox screen and the plugin server: the card title, how an ask is
-// answered (its kind and choices), and the message the inbox sends into the session. The message is
-// conversation text in the user's voice, not UI, so its language is a setting (see messages.ts).
+// answered (its kind and choices), which cards have Discuss, and the messages the inbox sends into
+// the session. The messages are conversation text in the user's voice, not UI, so their language is
+// a setting (see messages.ts).
 // Structural types, so both core cards and RPC cards fit.
 import { MESSAGES, type MessageLang } from "./messages.ts";
 
@@ -167,6 +168,43 @@ function composeListAnswer(card: CardLike, picks: Picks, text: string, lang: Mes
   const unanswered = order.filter((ask) => typeof picks[ask.id] !== "number");
   if (unanswered.length) lines.push(say.unanswered(unanswered.map((ask) => `${ask.id} ${questionLine(ask)}`)));
   return [say.listHeader(cardTitle(card)), ...lines, ...(text ? [text] : [])].join("\n");
+}
+
+/**
+ * The card's one line, as Discuss names it: an agent ask's `short` (else its question cut to 40
+ * characters), a result's label, a receipt's title. Null for permission requests, failed turns and
+ * older multi-item cards, which have no Discuss.
+ */
+export function discussLine(card: CardLike): string | null {
+  const single = singleItem(card);
+  if (!single) return null;
+  if (single.kind === "ask") return isAgentAsk(single.item) ? questionLine(single.item) : null;
+  return collapse(single.kind === "result" ? single.item.label : single.item.title);
+}
+
+/**
+ * What Discuss does on a card: `send` on a Paseo agent card (a message into its session, then the
+ * session opens); `open` on another host's agent card when its session page is configured (the page
+ * opens, nothing is sent); null hides the button.
+ */
+export function discussMode(card: CardLike & { host: string }, externalUrl: string | null): "send" | "open" | null {
+  if (discussLine(card) === null) return null;
+  if (card.host === "paseo") return "send";
+  return externalUrl ? "open" : null;
+}
+
+/**
+ * The message Discuss puts into the session: the user wants to talk the card over before acting on it,
+ * so the agent explains it in plain words (an ask with its options' trade-offs) and waits. Null on
+ * cards without Discuss.
+ *
+ *   (From the inbox: I'd like to talk about "Docs site: ship the new navigation?" before deciding. In a
+ *   few plain sentences, explain where it came from and the trade-offs of each option, then wait for me.)
+ */
+export function composeDiscussMessage(card: CardLike, lang: MessageLang = "en"): string | null {
+  const line = discussLine(card);
+  if (line === null) return null;
+  return singleItem(card)?.kind === "ask" ? MESSAGES[lang].discussAsk(line) : MESSAGES[lang].discussItem(line);
 }
 
 /**

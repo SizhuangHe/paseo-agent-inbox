@@ -1,8 +1,8 @@
 // Seeds a new inbox database with invented demo cards, through core's add (so every field is
 // validated as an agent's would be): a docs redesign session with two asks, a result and a failed
-// receipt; a flaky CI session with an ask and a result, and a child session it started with a
-// receipt (nested by Paseo's parent label); a session blocked on a permission request; and two
-// dispatches still running.
+// receipt; a flaky CI session with an ask the user is discussing in the session and a result, and a
+// child session it started with a receipt (nested by Paseo's parent label); a session blocked on a
+// permission request; and two dispatches still running.
 // --with-legacy adds an older card that holds several items, to render that layout.
 // usage: node seed-demo.mjs <new.db> [--with-legacy]
 import { existsSync } from "node:fs";
@@ -51,6 +51,7 @@ function file(sessionId, at, input) {
   const { cards } = queue.add({ host: "paseo", sessionId }, sessions[sessionId], input);
   queue.close();
   for (const { card } of cards) console.log(`${card.id}  ${card.topic}  ${card.asks[0]?.short ?? card.results[0]?.label ?? card.receipts[0]?.title}`);
+  return cards[0].card;
 }
 
 /** Registers dispatched work at `at`, as `queue_track` does. */
@@ -117,7 +118,7 @@ docs(
 );
 
 const ci = (at, timeline, item) => file(CI, at, { topic: "Flaky CI", timeline, ...item });
-ci(
+const stopgap = ci(
   "2026-11-12T15:02:00Z",
   { asked: { date: "11/11", text: "Find why CI fails at random" }, did: { date: "11/12", text: "Traced it to one test" }, stuck: { text: "Your call on a stopgap" } },
   {
@@ -148,6 +149,10 @@ ci(
     },
   },
 );
+// The user pressed Discuss on the stopgap question.
+const discussing = new Queue({ path: dbPath, now: () => new Date("2026-11-12T18:40:00Z") });
+discussing.markDiscussing(stopgap.id);
+discussing.close();
 file(CI_CHILD, "2026-11-12T16:40:00Z", {
   topic: "CI bisect",
   timeline: { asked: { date: "11/12", text: "Bisect the upload test" }, did: { date: "11/12", text: "Bisected 40 commits" }, stuck: { text: "Review the result" } },

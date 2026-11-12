@@ -2,7 +2,7 @@
 
 One inbox of **cards** for things where the next step belongs to the user. Agents in Paseo file them through tools; agents on other hosts can file them through the CLI. The inbox is shown in Paseo. The user goes through cards one by one and jumps back into the session a card came from to continue there.
 
-UI chrome (labels, buttons, section names, toasts, errors) is English. Card content is written by agents, in the user's language. The message the inbox sends into a session when the user answers is English by default and Chinese with `AGENT_INBOX_LANG=zh`.
+UI chrome (labels, buttons, section names, toasts, errors) is English. Card content is written by agents, in the user's language. The message the inbox sends into a session when the user answers is English by default and Chinese with `AGENT_INBOX_LANG=zh` (or `lang` in the settings file, see Components).
 
 ## Decisions
 
@@ -39,6 +39,7 @@ Store: SQLite (WAL) at `~/.local/share/agent-queue/queue.db` (`AGENT_QUEUE_DB` o
 | `state` | system | `open` \| `done` |
 | `firstReadyAt` | system | queue order key (FIFO) |
 | `supersededBy` | system | on a card closed by `replaces`, the card that took its place; null otherwise |
+| `discussingAt` | system | when the user pressed Discuss on the card; null otherwise. Not an update: `updatedAt` and the queue place stay |
 | `updatedAt`, `doneAt`, `doneBy` (`agent` \| `user`) | system | |
 
 Short fields are limited in display width (CJK and full-width characters 1, ASCII 0.5; `displayWidth` in core): timeline `asked`/`did` 18, `stuck` 20, `short` 30, option `label` 12 and `effect` 40, `whyNow` 60, `look` 22, `line` 26. `topic` is at most 15 characters. In core and the CLI every recall-first field is optional and checked only when present; the plugin's `queue_add` requires `timeline` and `ask.short`.
@@ -63,11 +64,17 @@ Answering from the inbox: `Send` hands one card back. It sends the answer and th
 
 It needs a pick or some reply text. Cards from other hosts have no Send.
 
+Discussing from the inbox: `Discuss` is for a card the user wants to talk over with the session before acting on it. Every agent card (ask, result, receipt) has it; permission requests, errors and older multi-item cards do not. On a Paseo card it sends one message into the session the same way Send does, opens the session (`openAgent`, as `Open session`), and tags the card `discussingAt`, shown as a muted `Discussing` tag. The card stays open; the agent closes it with `queue_resolve` once the user decides in the conversation, and Send, Seen and Dismiss work on it as on any card. On a card already tagged, Discuss only opens the session and sends nothing. If the send fails, the error shows, the card stays untagged and the session is not opened. `<line>` is the card's one line: the ask's `short` (else its question cut to 40 characters), the result `label`, the receipt `title`:
+- an ask: `(From the inbox: I'd like to talk about "<line>" before deciding. In a few plain sentences, explain where it came from and the trade-offs of each option, then wait for me.)`;
+- a result or receipt: `(From the inbox: I'd like to talk about "<line>". In a few plain sentences, explain where it came from, then wait for me.)`.
+
+Cards from other hosts have Discuss only when the external session page is set (see `Open session` under UI); there it opens that page and sends and tags nothing.
+
 Answering a permission request: host permission asks (`perm:<request id>`) carry what the request offers (`permission`: `{requestId, detail?, choices?: [{id, label, behavior}], questions?: [{header, question, options}]}`, built by the `agent.permission.before` hook the way Paseo's app builds its buttons: the request's `actions`, else `Deny` / `Accept` (`Implement` for a plan); a question request gets one row of option labels per question; multi-select questions get none and are answered in the session). Tapping a choice answers right away, apart from Send, because the session is blocked: the plugin checks the session's `pendingPermissions` (`paseo.agents.ref(id).refresh()`), then calls `respondToPermission({ requestId, response })` with the response Paseo's app sends (`{behavior: "allow", selectedActionId}`, `{behavior: "deny", selectedActionId, message: "Denied by user"}`, or `{behavior: "allow", updatedInput: {...input, answers: {header: label}}}`), and resolves the ask. A request that is no longer pending gets nothing sent; its ask is resolved and the row reads `Already answered`. If the response fails while the request is still pending, the error shows and the ask stays open.
 
 Closing: a card becomes `done` when the user sends it back (`doneBy user`); when the agent closes it with `queue_resolve` or `replaces` (`doneBy agent`); by itself once every item on it is resolved, host asks included; or when the user presses `Seen` or `Dismiss` (`doneBy user`). Both go through the same `queue.done` RPC: on an ask card it first sends `(Skipped in the inbox, a question in "<topic>": <short> Don't wait for me; if you really need my decision, ask again separately.)` (an older multi-item card names every open ask); if that send fails the card stays open and the error shows. Result, receipt and error cards, and cards from other hosts, close silently. Open permission requests are never closed this way. `Later` is always silent.
 
-Migrations run when a connection opens the file and stay additive (new JSON fields, nullable columns): after a code change the daemon may keep running the previous plugin code against the same file until the plugin is reloaded. Version 3 gave existing receipts ids and existing results and receipts `resolved: false`; items written without them by older code get them on read, in array order. Version 4 added the nullable `timeline` column; older code ignores it, its updates leave it as it is and its inserts leave it null. Version 5 added the nullable `agent` column (JSON), handled the same way. Version 6 dropped the unique index that allowed one open card per session, added the index `cards_by_session (host, session_id, state)` and the nullable `superseded_by` column; existing rows are untouched. Code from before version 6 keeps working on the file, reading the first open card of a session as that session's card; that degrades the one-item layout until the plugin is reloaded, but loses no data. `dropped` and `permission` live inside the ask and result JSON.
+Migrations run when a connection opens the file and stay additive (new JSON fields, nullable columns): after a code change the daemon may keep running the previous plugin code against the same file until the plugin is reloaded. Version 3 gave existing receipts ids and existing results and receipts `resolved: false`; items written without them by older code get them on read, in array order. Version 4 added the nullable `timeline` column; older code ignores it, its updates leave it as it is and its inserts leave it null. Version 5 added the nullable `agent` column (JSON), handled the same way. Version 6 dropped the unique index that allowed one open card per session, added the index `cards_by_session (host, session_id, state)` and the nullable `superseded_by` column; existing rows are untouched. Code from before version 6 keeps working on the file, reading the first open card of a session as that session's card; that degrades the one-item layout until the plugin is reloaded, but loses no data. Version 7 added the nullable `discussing_at` column, handled like `timeline`. `dropped` and `permission` live inside the ask and result JSON.
 
 ### Track (dispatched work)
 
@@ -89,7 +96,7 @@ Migrations run when a connection opens the file and stay additive (new JSON fiel
 1. **core** (`core/`): schema, migrations, add (one card per item; update in place; replaces) / hand back / resolve / snooze / done / track / list. TypeScript run directly by Node (type stripping), with `node:test` tests.
 2. **CLI** (`bin/agent-queue`): thin wrapper over core for manual use, scripts and other agent hosts. `add` takes JSON on stdin and validates it, `--replaces CARD_ID` to swap a card; `resolve --card ID` (repeatable; `--item` and `--ask` are aliases) or `--all`. Session identity comes from `--host/--session` or env `AGENT_QUEUE_SESSION=<host>:<id>`.
 3. **Paseo plugin** (`paseo-plugin/`, id `agent-queue`):
-   - Server: `agent.open.before` contributes a plugin-owned MCP server (`agent-queue`) with the agent tools `queue_add` (one card per call: `ask`, `result` or `receipt`, optional `replaces`), `queue_track`, `queue_resolve` (`cards` or `all`; identity from the tool context) and env `AGENT_QUEUE_SESSION=paseo:<agentId>`. Hooks for tracks, permissions, failures, snapshot refresh. RPCs for the client: list, snooze, done, answer, permission. Settings come from the daemon's environment (`server/settings.ts`).
+   - Server: `agent.open.before` contributes a plugin-owned MCP server (`agent-queue`) with the agent tools `queue_add` (one card per call: `ask`, `result` or `receipt`, optional `replaces`), `queue_track`, `queue_resolve` (`cards` or `all`; identity from the tool context) and env `AGENT_QUEUE_SESSION=paseo:<agentId>`. Hooks for tracks, permissions, failures, snapshot refresh. RPCs for the client: list, snooze, done, answer, discuss, permission. Settings (`server/settings.ts`) come from the daemon's environment, else from `~/.config/agent-inbox/config.json` (`lang`, `externalUrl`); a variable that is set wins. The file is read on each use, so an edit applies without a reload; a file that cannot be read or parsed is ignored and logged once.
    - Tool descriptions carry the filing criterion, so agents that never read the guide still file correctly.
    - Client: sidebar header item + one screen (below).
 
@@ -106,18 +113,18 @@ Inbox 8                                        › Running 2
 Docs redesign                                         4h   session header: topic · oldest wait
 ✻ Claude Work · Opus 5.5 · high · main  🗀 docs-site       agent line, muted
 ┌──────────────────────────────────────────────────────┐
-│ Docs site: ship the new navigation?                  │  the item's line (tap → detail)
+│ Docs site: ship the new navigation?     [Discussing] │  the item's line (tap → detail); tag
 │ You asked ● 11/10 Redesign the docs navigation       │
 │ It did    ● 11/12 3 branches built and tested        │  up to two lines each
 │ Blocked   ● Your call on shipping                    │  dot in the status color
-│ [Ship to all] [✓ Behind a flag] [Hold for now] [Send]│  recommended preselected
+│ [Ship to all] [✓ Behind a flag] [Hold…] [Discuss] [Send]  recommended preselected
 └──────────────────────────────────────────────────────┘
-┌ Before/after comparison · recall · Biggest change… ↗  [Seen] ┐  result: look, ↗ opens / ⧉ copies
+┌ Before/after comparison · recall · Biggest change… ↗  [Discuss] [Seen] ┐  result: look, ↗ opens / ⧉ copies
 Flaky CI                                              3h
 …
 │  CI bisect                                         2h   child session, nested one level
 │  ✻ Claude · Sonnet 5.5 · high · child of Flaky CI
-│  ┌ Bisect the flaky upload test · recall · ✓ line [Seen] ┐  receipt: line
+│  ┌ Bisect the flaky upload test · recall · ✓ line [Discuss] [Seen] ┐  receipt: line
 Prepare the 2.4 release                              40m
 ┌ Bash · Push the release branch to GitHub  [Deny] [Accept] ┐  host card: no recall
 
@@ -128,32 +135,32 @@ Docs site: ship the new navigation?
 [ You asked / It did / Blocked ]
 full question · whyNow · options with effect, recommended + why
 [ Reply… ]
-[Send] [Open session]                            Later   Dismiss
+[Send] [Discuss] [Open session]                  Later   Dismiss
 ```
 
 - Groups: open cards grouped by `host + sessionId`, in the order of each group's oldest `firstReadyAt` (children included); cards inside in queue order. A child session (parent from the latest card's `agent.parentSessionId`, the host's `paseo.parent-agent-id` label, else a track whose `childRef` is the session) nests under the top of its parent chain, one level deep. A parent with no open cards still gets its header, muted, named by `sessionTitles` (its last topic, else the host's title). A chain that loops leaves each session at the top.
 - Group header: the latest card's `topic` (else the session title), the group's own oldest wait, the agent line of its latest card.
-- Item card: the line (`short`, result `label`, receipt `title`; a host request or error in its status color, two lines at most), the three recall steps (two lines each; none on host cards and cards without a timeline), then:
-  - ask with options: chips (tap picks, tap again clears; the recommended one starts picked), the picked option's `effect`, and `Send` (filled; enabled once something is picked). An ask with nothing to pick shows `Reply ›`, which opens the detail;
-  - result: the `look` (else `note`, else the link) with ↗ for a URL (opens) or ⧉ for an absolute path (copies), and `Seen`;
-  - receipt: ✓ or ✕ and the `line` (else the conclusion), and `Seen`;
+- Item card: the line (`short`, result `label`, receipt `title`; a host request or error in its status color, two lines at most) with the muted `Discussing` tag beside it on a card under discussion, the three recall steps (two lines each; none on host cards and cards without a timeline), then:
+  - ask with options: chips (tap picks, tap again clears; the recommended one starts picked), the picked option's `effect`, `Discuss`, and `Send` (filled; enabled once something is picked). An ask with nothing to pick shows `Discuss` and `Reply ›`, which opens the detail;
+  - result: the `look` (else `note`, else the link) with ↗ for a URL (opens) or ⧉ for an absolute path (copies), `Discuss` and `Seen`;
+  - receipt: ✓ or ✕ and the `line` (else the conclusion), `Discuss` and `Seen`;
   - permission: its choices (a tap answers at once) or `Answer in session`;
   - error: `Open session ›` and `Seen`.
-- Item detail: topic and agent line, the line as the title, the recall box, then the full question, `whyNow`, every option with its `effect` (recommended tagged, with `why`); a result's look, note and link (a path shown in full, selectable, with `Copy path`); a receipt's status and full conclusion; a permission request in full with its choices. Footer: `Reply…` and `Send` on asks and results; `Seen` on results, receipts and errors; `Open session`; `Later`; `Dismiss` on asks.
+- Item detail: topic and agent line, the line as the title, the recall box, then the full question, `whyNow`, every option with its `effect` (recommended tagged, with `why`); a result's look, note and link (a path shown in full, selectable, with `Copy path`); a receipt's status and full conclusion; a permission request in full with its choices. The `Discussing` tag sits in the top row, before the wait. Footer: `Reply…` and `Send` on asks and results; `Seen` on results, receipts and errors; `Discuss` on asks, results and receipts; `Open session`; `Later`; `Dismiss` on asks.
 - Older multi-item cards: under their session header as a card with the recall and counts (`1 approve · 1 review ›`); their detail lists the items by section (Permission, Decide, Approve, Review, Returned) with `Send N answers`.
 - Copying a path: Paseo's `copyText`, else (plain-http web, where the async clipboard is missing or rejects) a hidden textarea and `document.execCommand("copy")`, run inside the tap when the clipboard is known to be missing. When both fail there is no error toast: the card shows the full path as selectable text. `Path copied` on success.
 - Status color: has unresolved asks → `statusWarning`; error → `statusDanger`; results / receipts only → `accent`.
 - Permission rows: the request in one line, › for the full request (tool, description, command, path or plan); chips for its choices, or one row of chips per question (the last pick answers). While the answer is on its way the chips are disabled; then the row reads `✓ Allowed`, `Denied`, `✓ Sent` or `Already answered`. Requests with nothing to pick, and cards from other hosts, show `Answer in session`.
-- `Open session`: Paseo cards → `openAgent({agentId})`; cards from other hosts → the page `AGENT_INBOX_EXTERNAL_URL` names (`{session}` replaced by the session id), hidden when it is unset.
+- `Open session`: Paseo cards → `openAgent({agentId})`; cards from other hosts → the page `AGENT_INBOX_EXTERNAL_URL` (or `externalUrl` in the settings file) names (`{session}` replaced by the session id), hidden when it is unset.
 - Waited and running times read `36m`, `2h`, `3d`.
 - Agent line (group header and detail, under the topic, muted 12 px): provider logo, then `plan · model · effort · role`, then a folder glyph and the workspace.
   - Logo: the icon Paseo shows for the provider (copied into `client/provider-icons.ts`: Claude, Codex, OpenCode), picked by the provider id or its prefix before `-` (`claude-work` → Claude); a dot for others.
   - `plan`: the provider's display name from `paseo.providers.snapshot()`, else the provider id. `model`: the model's display label from the same snapshot, else the id shortened (`claude-opus-5-5` → `Opus 5.5`, `opencode-go/kimi-k3.1-pro` → `kimi-k3.1-pro`). `effort`: the label of the effective thinking option from the snapshot, else its id; left out when none. Role: `main`, or `child of <parent's card topic or session title>`.
   - Workspace: the Paseo workspace `name`, else the cwd with the home directory as `~` (`~` alone for home). On the same row when everything fits, else on its own row below; items never wrap inside.
-- On a phone (390 px) the footer buttons fit on one row only with the tighter compact spacing; keep new footer buttons out or re-measure.
+- On a phone (390 px) the footer buttons fit on one row only with the tighter compact spacing (10 px button padding, 6 px gaps): `Send Discuss Open session Later Dismiss` leaves 15 px, `Send Seen Discuss Open session Later` 16 px. Keep new footer buttons out or re-measure.
 - `Running`: collapsed; expands to rows `title · session · 12m` (dispatching session, time running).
 - Empty state: one line `Nothing waiting` plus the `Running` row.
-- Toasts: `Sent`, `Path copied`. Errors shown to the user are English.
+- Toasts: `Sent`, `Path copied`. Discuss shows none: the session it opens shows the message. Errors shown to the user are English.
 
 ## Out of scope
 

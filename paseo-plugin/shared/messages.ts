@@ -1,4 +1,4 @@
-// The text the inbox sends into a session when the user answers or skips a card. It reads as the
+// The text the inbox sends into a session when the user answers, skips or discusses a card. It reads as the
 // user's own words in that conversation, so it comes in the user's language: English by default,
 // Chinese when the daemon runs with AGENT_INBOX_LANG=zh.
 
@@ -26,6 +26,10 @@ export interface MessageSet {
   skipOne(topic: string, question: string): string;
   /** Dismiss on an older card, naming every open ask. */
   skipList(topic: string, items: string[]): string;
+  /** Discuss on an ask: explain it and the options, then wait. `line` is the ask's one line. */
+  discussAsk(line: string): string;
+  /** Discuss on a result or returned work: explain it, then wait. `line` is its label or title. */
+  discussItem(line: string): string;
 }
 
 const EN_STOP = /[?.!…]$/;
@@ -50,6 +54,9 @@ const en: MessageSet = {
     const stop = EN_STOP.test(list) ? "" : ".";
     return `(Skipped in the inbox, the card "${topic}", not answered: ${list}${stop} Don't wait for me on these; if one really needs my decision, ask again separately.)`;
   },
+  discussAsk: (line) =>
+    `(From the inbox: I'd like to talk about "${line}" before deciding. In a few plain sentences, explain where it came from and the trade-offs of each option, then wait for me.)`,
+  discussItem: (line) => `(From the inbox: I'd like to talk about "${line}". In a few plain sentences, explain where it came from, then wait for me.)`,
 };
 
 const zh: MessageSet = {
@@ -71,6 +78,8 @@ const zh: MessageSet = {
     const stop = ZH_STOP.test(list) ? "" : "。";
     return `（从队列跳过「${topic}」卡，没回答：${list}${stop}这些先不用等我；真需要我定，下次单独问。）`;
   },
+  discussAsk: (line) => `（从队列：想先聊聊「${line}」再定。用几句白话讲清来龙去脉和各选项的利弊，然后等我。）`,
+  discussItem: (line) => `（从队列：想先聊聊「${line}」。用几句白话讲清来龙去脉，然后等我。）`,
 };
 
 export const MESSAGES: Record<MessageLang, MessageSet> = { en, zh };

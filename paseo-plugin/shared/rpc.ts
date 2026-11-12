@@ -93,6 +93,8 @@ export const CardSchema = z.object({
   doneBy: z.enum(["agent", "user"]).nullable(),
   /** The card that replaced this one (`replaces`); null otherwise. Optional: older daemons do not send it. */
   supersededBy: z.string().nullable().optional(),
+  /** When the user pressed Discuss on it; null otherwise. Optional: older daemons do not send it. */
+  discussingAt: z.string().nullable().optional(),
 });
 
 export const TrackSchema = z.object({
@@ -167,6 +169,17 @@ export const sendAnswers = defineRpc({
     reply: z.string().max(4000).optional(),
   }),
   output: z.object({ card: CardSchema }),
+});
+
+/**
+ * Discuss: sends one message asking the card's session to talk it over, then tags the card
+ * (`discussingAt`); it stays open. A card already tagged sends nothing (`sent: false`). Paseo agent
+ * cards only (asks, results, receipts).
+ */
+export const startDiscussion = defineRpc({
+  name: "queue.discuss",
+  input: z.object({ cardId: z.string() }),
+  output: z.object({ card: CardSchema, sent: z.boolean() }),
 });
 
 /** The user's answer to a permission ask: one choice (its id), or one option label per question header. */
