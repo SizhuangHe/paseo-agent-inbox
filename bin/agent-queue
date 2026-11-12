@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Entry point; the CLI lives in cli.ts (run directly by Node 25 type stripping).
+import "./cli.ts";

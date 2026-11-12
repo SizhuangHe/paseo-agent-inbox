@@ -1,0 +1,6 @@
+node_modules/
+/screenshots/
+*.db
+*.db-wal
+*.db-shm
+ui-harness/dist/

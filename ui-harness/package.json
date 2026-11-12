@@ -1,0 +1,16 @@
+{
+  "name": "agent-inbox-ui-harness",
+  "private": true,
+  "description": "Renders the inbox screen component with react-native-web for headless screenshots.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native-web": "^0.21.0"
+  }
+}
