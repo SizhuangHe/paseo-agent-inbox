@@ -1,8 +1,8 @@
 // Pure display helpers for the inbox screen.
-import { askKind, singleItem } from "../shared/cards";
+import { askKind, isPermissionAsk, singleItem } from "../shared/cards";
 import type { QueueCard } from "../shared/rpc";
 
-export { cardTitle } from "../shared/cards";
+export { cardTitle, isPermissionAsk } from "../shared/cards";
 
 export type CardStatus = "danger" | "warning" | "accent";
 
@@ -27,9 +27,6 @@ export function elapsed(fromIso: string, nowMs: number): string {
   if (hours < 24) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
 }
-
-/** A host permission request (`perm:…`): answered on the card right away, apart from Send. */
-export const isPermissionAsk = (ask: { id: string }) => ask.id.startsWith("perm:");
 
 /** An ask the host filed (a permission request or a failed turn), not the agent. */
 export const isHostAsk = (ask: { id: string }) => isPermissionAsk(ask) || ask.id.startsWith(ERROR_ASK);

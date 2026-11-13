@@ -3,8 +3,9 @@
 // receipt; a flaky CI session with an ask the user is discussing in the session and a result, and a
 // child session it started with a receipt (nested by Paseo's parent label); a session blocked on a
 // permission request; and two dispatches still running.
-// --with-legacy adds an older card that holds several items, to render that layout.
-// usage: node seed-demo.mjs <new.db> [--with-legacy]
+// --with-legacy adds an older card that holds several items, to render that layout; --more adds a
+// mobile app session with three cards, which takes the inbox past ten cards, so it starts folded.
+// usage: node seed-demo.mjs <new.db> [--with-legacy] [--more]
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { Queue } from "../core/index.ts";
@@ -12,15 +13,17 @@ import { describePermission } from "../paseo-plugin/server/hooks.ts";
 import { permissionInfo } from "../paseo-plugin/server/permissions.ts";
 
 const [dbPath, ...flags] = process.argv.slice(2);
-if (!dbPath) throw new Error("usage: node seed-demo.mjs <new.db> [--with-legacy]");
+if (!dbPath) throw new Error("usage: node seed-demo.mjs <new.db> [--with-legacy] [--more]");
 if (existsSync(dbPath)) throw new Error(`${dbPath} exists; seed a new file`);
 const withLegacy = flags.includes("--with-legacy");
+const withMore = flags.includes("--more");
 
 const HOME = "/home/demo";
 const opus = { plan: "Claude Work", modelLabel: "Opus 5.5", effort: "high", effortLabel: "high", parentSessionId: null };
 const DOCS = "agent-docs";
 const CI = "agent-ci";
 const CI_CHILD = "agent-ci-bisect";
+const MOBILE = "agent-mobile";
 const sessions = {
   [DOCS]: {
     sessionTitle: "docs navigation redesign",
@@ -35,6 +38,13 @@ const sessions = {
     provider: "claude",
     model: "claude-opus-5-5",
     agent: { ...opus, plan: "Claude", effort: "xhigh", effortLabel: "xhigh", workspace: "api-server" },
+  },
+  [MOBILE]: {
+    sessionTitle: "offline mode for the mobile app",
+    cwd: `${HOME}/projects/mobile-app`,
+    provider: "codex",
+    model: "gpt-5.5",
+    agent: { plan: "Codex", modelLabel: "GPT-5.5", effort: "high", effortLabel: "high", parentSessionId: null, workspace: "mobile-app" },
   },
   [CI_CHILD]: {
     sessionTitle: "bisect the upload test",
@@ -194,6 +204,36 @@ const permission = blocked.addSystemAsk(
 );
 blocked.close();
 console.log(`${permission.id}  (permission)`);
+
+if (withMore) {
+  const mobile = (at, timeline, item) => file(MOBILE, at, { topic: "Offline mode", timeline, ...item });
+  mobile(
+    "2026-11-12T16:10:00Z",
+    { asked: { date: "11/11", text: "Add an offline mode" }, did: { date: "11/12", text: "Cached reads work offline" }, stuck: { text: "Your call on writes" } },
+    {
+      ask: {
+        short: "Mobile: queue writes made offline?",
+        question: "Reads now work offline from the cache. Should edits made offline wait in a queue and sync later, or be blocked until the app is online?",
+        options: [
+          { label: "Queue them", effect: "Edits sync when back online; conflicts possible" },
+          { label: "Block them", effect: "Offline is read-only" },
+        ],
+        recommended: 0,
+        why: "Most edits are notes nobody else touches.",
+      },
+    },
+  );
+  mobile(
+    "2026-11-12T16:30:00Z",
+    { asked: { date: "11/11", text: "Add an offline mode" }, did: { date: "11/12", text: "Measured cache size" }, stuck: { text: "Waiting for your review" } },
+    { result: { label: "Cache size on three test phones", href: "https://example.com/mobile/cache-size", look: "The 2 GB limit row" } },
+  );
+  mobile(
+    "2026-11-12T17:05:00Z",
+    { asked: { date: "11/12", text: "Ship offline mode in 3.1" }, did: { date: "11/12", text: "Release notes drafted" }, stuck: { text: "Need your wording" } },
+    { ask: { short: "Mobile: name the feature in the notes?", question: "What should the release notes call the feature: Offline mode, Work offline, or something else?" } },
+  );
+}
 
 if (withLegacy) {
   // An older card holding several items, as cards were filed before one card held one thing; written

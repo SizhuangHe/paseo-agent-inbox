@@ -1,5 +1,8 @@
 // The overview's lineage: open cards grouped by the session that filed them, a child session nested
-// under the session that started it. Pure, so the screen and the tests share it.
+// under the session that started it, and the sessions grouped by workspace; plus what a folded row
+// says and which rows start folded. Pure, so the screen and the tests share it.
+import { workspaceName } from "./agent-line.ts";
+import { isPermissionAsk } from "./cards.ts";
 import type { QueueCard } from "./rpc.ts";
 
 export interface SessionGroup {
@@ -99,4 +102,81 @@ export function groupSessions<C extends QueueCard>(cards: readonly C[], childOf:
 /** The card a group's header speaks for: its most recently updated one (topic and agent are current there). */
 export function latestCard<C extends Pick<QueueCard, "updatedAt">>(cards: readonly C[]): C | null {
   return cards.reduce<C | null>((a, b) => (!a || b.updatedAt > a.updatedAt ? b : a), null);
+}
+
+/** A workspace in the overview: the session groups whose session runs there. */
+export interface WorkspaceGroup {
+  /** The Paseo workspace name, else the cwd with home as ~; also its fold key. */
+  name: string;
+  /** Top-level session groups, children nested as `groupSessions` left them, in its order. */
+  sessions: SessionGroup[];
+  /** The oldest `firstReadyAt` of every card in it, children's included. */
+  oldest: string | null;
+}
+
+/** The name for sessions whose cards carry neither a workspace nor a cwd. */
+export const NO_WORKSPACE = "No workspace";
+
+/**
+ * Groups session groups (as `groupSessions` returns them) by workspace: the one on the session's
+ * latest card, or for a placeholder parent on its children's latest card. A child stays under its
+ * parent wherever it runs itself: lineage wins. Workspaces are ordered by their oldest card; sessions
+ * keep their order inside.
+ */
+export function groupWorkspaces(groups: readonly SessionGroup[], home: string | null): WorkspaceGroup[] {
+  const byName = new Map<string, WorkspaceGroup>();
+  for (const group of groups) {
+    const latest = latestCard(group.cards) ?? latestCard(group.children.flatMap((child) => child.cards));
+    const name = (latest && workspaceName(latest, home)) || NO_WORKSPACE;
+    let workspace = byName.get(name);
+    if (!workspace) {
+      workspace = { name, sessions: [], oldest: null };
+      byName.set(name, workspace);
+    }
+    workspace.sessions.push(group);
+    workspace.oldest = minIso([workspace.oldest, group.oldest]);
+  }
+  return [...byName.values()].sort((a, b) => (a.oldest ?? "").localeCompare(b.oldest ?? ""));
+}
+
+/** The most pressing thing under a row, for its one status dot: a pending permission, else a decision, else something to review or returned work. */
+export type FoldStatus = "permission" | "decide" | "review";
+
+/** What a workspace row or a folded session header says about the open cards under it. */
+export interface FoldSummary {
+  /** Top-level sessions; a child counts with its parent. */
+  sessions: number;
+  /** Open cards, children's included. */
+  waiting: number;
+  /** Pending permission requests. */
+  permissions: number;
+  oldest: string | null;
+  /** Null when nothing is open. */
+  status: FoldStatus | null;
+}
+
+/** Counts every open card under the groups, whether or not a fold hides it. */
+export function summarize(groups: readonly SessionGroup[]): FoldSummary {
+  const cards = groups.flatMap((group) => [...group.cards, ...group.children.flatMap((child) => child.cards)]);
+  const asks = cards.flatMap((card) => card.asks.filter((ask) => !ask.resolved && !ask.dropped));
+  const permissions = asks.filter(isPermissionAsk).length;
+  const status: FoldStatus | null = permissions ? "permission" : asks.length ? "decide" : cards.length ? "review" : null;
+  return { sessions: groups.length, waiting: cards.length, permissions, oldest: minIso(groups.map((group) => group.oldest)), status };
+}
+
+/** Up to this many open cards the overview starts expanded; above it every workspace starts folded. */
+export const EXPANDED_UP_TO = 10;
+
+export const workspaceFoldedByDefault = (openCards: number) => openCards > EXPANDED_UP_TO;
+
+/** Fold keys: one namespace for workspaces (by name), one for sessions (by group key). */
+export const workspaceFoldKey = (workspace: Pick<WorkspaceGroup, "name">) => `workspace:${workspace.name}`;
+export const sessionFoldKey = (group: Pick<SessionGroup, "key">) => `session:${group.key}`;
+
+/**
+ * Whether a row is folded: what the user last chose for its key, else its default (a workspace by
+ * the open-card count, a session header expanded).
+ */
+export function isFolded(chosen: ReadonlyMap<string, boolean>, key: string, byDefault: boolean): boolean {
+  return chosen.get(key) ?? byDefault;
 }

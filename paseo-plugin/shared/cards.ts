@@ -49,6 +49,9 @@ export function singleItem<C extends CardLike>(card: C): SingleItem<C> | null {
 /** An ask the agent wrote (q1, q2, …), not one the host filed (`perm:`, `err:`). */
 export const isAgentAsk = (ask: { id: string }) => /^q\d+$/.test(ask.id);
 
+/** A host permission request (`perm:…`): answered on the card right away, apart from Send. */
+export const isPermissionAsk = (ask: { id: string }) => ask.id.startsWith("perm:");
+
 /**
  * Card title: the agent's topic. Cards the host created (permission, failure, receipts) and
  * cards filed before topics existed fall back to the Paseo title, then the dispatched work.
