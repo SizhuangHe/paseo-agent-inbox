@@ -1,16 +1,30 @@
 // Presentational inbox screen. One card is one thing for the user (an ask, a result, a receipt, or a
 // host request), with its own You asked → It did → Blocked recall. The overview groups cards under
 // the session that filed them (topic, agent line, oldest wait), a child session nested under the one
-// that started it, and lets the user answer, look and close right there; tapping a card's title opens
-// it in detail. Older cards that hold several items keep their earlier layout. UI labels are English;
-// card content is the agents' own words. All colors come from the Paseo theme; color only carries status.
+// that started it, and the sessions under their workspace; workspace rows and session headers fold.
+// The user answers, looks and closes right there; tapping a card's title opens it in detail. Older
+// cards that hold several items keep their earlier layout. UI labels are English; card content is the
+// agents' own words. All colors come from the Paseo theme; color only carries status.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, TextInput } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View, type PressableStateCallbackType, type TextStyle, type ViewStyle } from "react-native";
 import { agentLine } from "../shared/agent-line";
 import { askChoices, askKind, discussLine, questionLine, recommendedChoice, singleItem, type Picks } from "../shared/cards";
-import { groupSessions, latestCard, type SessionGroup } from "../shared/groups";
+import {
+  groupSessions,
+  groupWorkspaces,
+  isFolded,
+  latestCard,
+  sessionFoldKey,
+  summarize,
+  workspaceFoldedByDefault,
+  workspaceFoldKey,
+  type FoldStatus,
+  type FoldSummary,
+  type SessionGroup,
+  type WorkspaceGroup,
+} from "../shared/groups";
 import type { PermissionAnswer, PermissionOutcome, QueueAsk, QueueCard, QueueTrack } from "../shared/rpc";
 import {
   cardCounts,
@@ -77,6 +91,11 @@ export interface QueueViewProps {
   defaultExpanded?: string[];
   /** Cards that start with their full path shown, as after a failed copy. */
   defaultRevealed?: string[];
+  /**
+   * Fold state by workspace and session key (see shared/groups), read and written here. The screen
+   * passes one that outlives the view; left out, the view keeps its own.
+   */
+  folds?: Map<string, boolean>;
 }
 
 /** A permission answer on its way (busy), or how it went. */
@@ -132,14 +151,27 @@ function useStyles(theme: PluginTheme, compact: boolean) {
         trackMeta: { color: c.foregroundMuted, fontSize: 13, fontVariant: ["tabular-nums"] },
         empty: { color: c.foregroundMuted, fontSize: 15, paddingVertical: 24, paddingHorizontal: 2 },
 
-        // overview: session groups, each a header row over its cards; a child session nests one level in
-        groups: { gap: 22 },
+        // overview: workspace rows, each over its session groups (indented); a session group is a header
+        // row over its cards, and a child session nests one level in. Rows fold behind a chevron.
+        workspaces: { gap: compact ? 20 : 24 },
+        workspaceRow: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 30, paddingHorizontal: 2, borderRadius: 6 },
+        workspaceName: { flexShrink: 1, minWidth: 0, color: c.foreground, fontSize: 15, lineHeight: 21, fontWeight: "600" },
+        workspaceFill: { flex: 1, minWidth: 8 },
+        // the summary under the name on a phone: past the chevron and the dot
+        workspaceSummaryLine: { marginLeft: 35, marginTop: -2 },
+        workspaceBody: { gap: 22, marginTop: 10, marginLeft: compact ? 8 : 18 },
+        statusDot: { width: 7, height: 7, borderRadius: 3.5 },
+        summary: { color: c.foregroundMuted, fontSize: 13, lineHeight: 18, fontVariant: ["tabular-nums"] },
+        // the oldest wait after the counts, set apart from them
+        foldWaited: { marginLeft: 6 },
         group: { gap: 8 },
         children: { gap: 14, marginTop: 6, marginLeft: compact ? 4 : 6, paddingLeft: compact ? 10 : 14, borderLeftWidth: 1.5, borderLeftColor: c.border },
         groupHead: { paddingHorizontal: 2 },
-        groupTitleRow: { flexDirection: "row", alignItems: "baseline", gap: 10 },
+        groupTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 24, marginHorizontal: -2, paddingHorizontal: 2, borderRadius: 6 },
         groupTitle: { flex: 1, minWidth: 0, color: c.foreground, fontSize: 14, lineHeight: 20, fontWeight: "600" },
         groupTitleMuted: { color: c.foregroundMuted, fontWeight: "500" },
+        // the agent line under a session's title, past the chevron
+        groupMeta: { marginLeft: 18 },
         groupCards: { gap: 8 },
 
         // one card: its line, the recall, then what it asks of the user
@@ -824,32 +856,84 @@ function ListCard({ card, s, theme, onSelect }: { card: QueueCard; s: Styles; th
   );
 }
 
-/** A session's header: its topic and how long its oldest card has waited, then the agent line. A parent without open cards is muted. */
-function GroupHeader({ group, data, s, theme, nowMs }: { group: SessionGroup; data: QueueData; s: Styles; theme: PluginTheme; nowMs: number }) {
+/** Fold state for the overview: whether a row is folded, and the tap that flips it. */
+interface FoldControl {
+  folded(key: string, byDefault: boolean): boolean;
+  toggle(key: string, byDefault: boolean): void;
+  /** Whether workspaces start folded, by the count of open cards. */
+  workspaceDefault: boolean;
+}
+
+/** The fold chevron, as on Running: › turned down while open. */
+function Chevron({ open, s }: { open: boolean; s: Styles }) {
+  return <Text style={[s.chevron, open ? s.chevronOpen : null]}>›</Text>;
+}
+
+/** The status dot's color: a pending permission and a decision in the warning color, review and returned work in the accent. */
+function foldColor(theme: PluginTheme, status: FoldStatus | null): string {
+  return statusColor(theme, status === "review" ? "accent" : "warning");
+}
+
+const SEP = "\u2002·\u2002"; // en spaces: plain spaces collapse on the web
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** `2 sessions · 4 waiting · 1 permission`: sessions on workspace rows only, permissions only when one is pending (in the warning color). */
+function SummaryText({ summary, sessions, s, theme }: { summary: FoldSummary; sessions: boolean; s: Styles; theme: PluginTheme }) {
+  const counts = [...(sessions ? [plural(summary.sessions, "session")] : []), `${summary.waiting} waiting`].join(SEP);
+  return (
+    <Text style={s.summary} numberOfLines={1}>
+      {counts}
+      {summary.permissions ? <Text style={{ color: theme.colors.statusWarning }}>{`${SEP}${plural(summary.permissions, "permission")}`}</Text> : null}
+    </Text>
+  );
+}
+
+/**
+ * A session's header: its topic and how long its oldest card has waited, then the agent line. A parent
+ * without open cards is muted. Tapping the title row folds the session; folded, it says how many cards
+ * wait under it (its children's included) and the oldest wait among them.
+ */
+function GroupHeader(props: { group: SessionGroup; data: QueueData; s: Styles; theme: PluginTheme; nowMs: number; folded: boolean; onToggle(): void }) {
+  const { group, data, s, theme, nowMs, folded } = props;
   const latest = latestCard(group.cards);
-  const oldest = group.cards.reduce<string | null>((a, b) => (a === null || b.firstReadyAt < a ? b.firstReadyAt : a), null);
+  const own = group.cards.reduce<string | null>((a, b) => (a === null || b.firstReadyAt < a ? b.firstReadyAt : a), null);
+  const summary = folded ? summarize([group]) : null;
+  const oldest = summary ? summary.oldest : own;
   const name = latest
     ? latest.topic?.trim() || data.sessionTitles[group.sessionId] || cardTitle(latest)
     : data.sessionTitles[group.sessionId] || group.sessionId.slice(0, 8);
   return (
     <View style={s.groupHead}>
-      <View style={s.groupTitleRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !folded }}
+        onPress={props.onToggle}
+        style={pressStyle(s.groupTitleRow, s.hover, s)}
+      >
+        <Chevron open={!folded} s={s} />
         <Text style={[s.groupTitle, group.placeholder ? s.groupTitleMuted : null]} numberOfLines={1}>
           {name}
         </Text>
-        {oldest ? <Text style={s.waited}>{elapsed(oldest, nowMs)}</Text> : null}
-      </View>
-      {latest ? <AgentLineView card={latest} data={data} s={s} theme={theme} /> : null}
+        {summary ? <SummaryText summary={summary} sessions={false} s={s} theme={theme} /> : null}
+        {oldest ? <Text style={[s.waited, summary ? s.foldWaited : null]}>{elapsed(oldest, nowMs)}</Text> : null}
+      </Pressable>
+      {latest ? (
+        <View style={s.groupMeta}>
+          <AgentLineView card={latest} data={data} s={s} theme={theme} />
+        </View>
+      ) : null}
     </View>
   );
 }
 
-function GroupView(props: { group: SessionGroup; data: QueueData; view: QueueViewProps; actions: CardActions; s: Styles; nowMs: number }) {
-  const { group, data, view, actions, s, nowMs } = props;
+function GroupView(props: { group: SessionGroup; data: QueueData; view: QueueViewProps; actions: CardActions; fold: FoldControl; s: Styles; nowMs: number }) {
+  const { group, data, view, actions, fold, s, nowMs } = props;
+  const key = sessionFoldKey(group);
+  const folded = fold.folded(key, false);
   return (
     <View style={s.group}>
-      <GroupHeader group={group} data={data} s={s} theme={view.theme} nowMs={nowMs} />
-      {group.cards.length ? (
+      <GroupHeader group={group} data={data} s={s} theme={view.theme} nowMs={nowMs} folded={folded} onToggle={() => fold.toggle(key, false)} />
+      {!folded && group.cards.length ? (
         <View style={s.groupCards}>
           {group.cards.map((card) =>
             cardKind(card) === "list" ? (
@@ -860,13 +944,54 @@ function GroupView(props: { group: SessionGroup; data: QueueData; view: QueueVie
           )}
         </View>
       ) : null}
-      {group.children.length ? (
+      {!folded && group.children.length ? (
         <View style={s.children}>
           {group.children.map((child) => (
             <GroupView key={child.key} {...props} group={child} />
           ))}
         </View>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * A workspace: one row (chevron, status dot, name, `N sessions · M waiting`, a pending permission, the
+ * oldest wait) over its session groups, indented. Tapping the row folds it to the row alone. On a phone
+ * the counts go under the name.
+ */
+function WorkspaceView(props: { workspace: WorkspaceGroup; data: QueueData; view: QueueViewProps; actions: CardActions; fold: FoldControl; s: Styles; nowMs: number }) {
+  const { workspace, data, view, actions, fold, s, nowMs } = props;
+  const { theme, compact } = view;
+  const key = workspaceFoldKey(workspace);
+  const folded = fold.folded(key, fold.workspaceDefault);
+  const summary = summarize(workspace.sessions);
+  const counts = <SummaryText summary={summary} sessions s={s} theme={theme} />;
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !folded }}
+        onPress={() => fold.toggle(key, fold.workspaceDefault)}
+        style={pressStyle(s.workspaceRow, s.hover, s)}
+      >
+        <Chevron open={!folded} s={s} />
+        <View style={[s.statusDot, { backgroundColor: foldColor(theme, summary.status) }]} />
+        <Text style={s.workspaceName} numberOfLines={1}>
+          {workspace.name}
+        </Text>
+        <View style={s.workspaceFill} />
+        {compact ? null : counts}
+        {summary.oldest ? <Text style={[s.waited, compact ? null : s.foldWaited]}>{elapsed(summary.oldest, nowMs)}</Text> : null}
+      </Pressable>
+      {compact ? <View style={s.workspaceSummaryLine}>{counts}</View> : null}
+      {folded ? null : (
+        <View style={s.workspaceBody}>
+          {workspace.sessions.map((group) => (
+            <GroupView key={group.key} group={group} data={data} view={view} actions={actions} fold={fold} s={s} nowMs={nowMs} />
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -1501,7 +1626,10 @@ export function QueueView(input: QueueViewProps) {
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(props.defaultExpanded ?? []));
   const [revealed, setRevealed] = useState<ReadonlySet<string>>(() => new Set(props.defaultRevealed ?? []));
-  const groups = useMemo(() => groupSessions(data.cards, data.childOf), [data.cards, data.childOf]);
+  const workspaces = useMemo(() => groupWorkspaces(groupSessions(data.cards, data.childOf), data.home), [data.cards, data.childOf, data.home]);
+  const [ownFolds] = useState(() => new Map<string, boolean>());
+  const folds = props.folds ?? ownFolds;
+  const [, setFoldVersion] = useState(0);
   const nowMs = Date.parse(data.now) + (props.clockSkewMs ?? 0);
   const selected = data.cards.find((card) => card.id === props.selectedId) ?? null;
   const running = data.tracks;
@@ -1525,6 +1653,16 @@ export function QueueView(input: QueueViewProps) {
         if (copied === false) setRevealed((all) => new Set(all).add(card.id));
       });
     },
+  };
+
+  // Folding changes only what is shown; every count still covers all open cards.
+  const fold: FoldControl = {
+    folded: (key, byDefault) => isFolded(folds, key, byDefault),
+    toggle: (key, byDefault) => {
+      folds.set(key, !isFolded(folds, key, byDefault));
+      setFoldVersion((version) => version + 1);
+    },
+    workspaceDefault: workspaceFoldedByDefault(data.cards.length),
   };
 
   /** What Send sends on an older card: unresolved asks with a pick. */
@@ -1613,10 +1751,10 @@ export function QueueView(input: QueueViewProps) {
         </View>
       ) : null}
 
-      {groups.length ? (
-        <View style={s.groups}>
-          {groups.map((group) => (
-            <GroupView key={group.key} group={group} data={data} view={props} actions={actions} s={s} nowMs={nowMs} />
+      {workspaces.length ? (
+        <View style={s.workspaces}>
+          {workspaces.map((workspace) => (
+            <WorkspaceView key={workspace.name} workspace={workspace} data={data} view={props} actions={actions} fold={fold} s={s} nowMs={nowMs} />
           ))}
         </View>
       ) : (

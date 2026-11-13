@@ -35,6 +35,11 @@ export function tildify(path: string | null, home: string | null): string | null
   return path.startsWith(`${root}/`) ? `~${path.slice(root.length)}` : path;
 }
 
+/** The workspace a card's session runs in: the Paseo workspace name, else the cwd with home as ~. */
+export function workspaceName(card: Pick<QueueCard, "agent" | "cwd">, home: string | null): string | null {
+  return card.agent?.workspace || tildify(card.cwd, home);
+}
+
 /** Card sessions started by a registered dispatch: session id → dispatching session (null if unknown). */
 export function trackParents(
   cards: readonly Pick<QueueCard, "host" | "sessionId">[],
@@ -90,6 +95,6 @@ export function agentLine(card: QueueCard, context: AgentLineContext): AgentLine
   return {
     icon: providerIconKey(card),
     items: [plan, model, effort, role].filter((item): item is string => !!item),
-    workspace: meta.workspace || tildify(card.cwd, context.home),
+    workspace: workspaceName(card, context.home),
   };
 }

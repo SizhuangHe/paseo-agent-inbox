@@ -23,6 +23,12 @@ import { QueueView, type PermissionState } from "./queue-view";
 export const QUEUE_SCREEN_ID = "queue";
 const QUERY_KEY = ["agent-queue", "list"] as const;
 const POLL_MS = 5_000;
+/**
+ * Which workspace rows and session headers the user folded or opened, for the life of the client:
+ * module scope, so it outlives the screen. Not persisted: Paseo gives a plugin screen no storage on the
+ * device (plugin settings live on the daemon, shared by every device; tab state is for panels).
+ */
+const FOLDS = new Map<string, boolean>();
 
 function useQueueList() {
   const list = useRpc(listQueue);
@@ -179,6 +185,7 @@ export function QueueScreen({ theme, layout, navigation }: PluginScreenProps) {
         permissionStates={permissionStates}
         onOpenUrl={onOpenUrl}
         onCopyPath={onCopyPath}
+        folds={FOLDS}
         busyCardId={
           settle.isPending
             ? settle.variables?.card.id ?? null

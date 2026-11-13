@@ -10,7 +10,7 @@ UI chrome (labels, buttons, section names, toasts, errors) is English. Card cont
 - Criterion for filing: **the next step is the user's**: a decision only the user can make, or a result the user should look at. Not filed: things the agent can decide itself; questions inside an ongoing discussion the user is actively in; physical tasks for the user.
 - Agents file cards themselves through a tool. The tool descriptions carry the filing criterion in two or three sentences; the full agent guide is `skill/SKILL.md`.
 - When the user answers inside the session (not from the inbox), the **agent resolves the card itself**.
-- **One card is one thing for the user**: exactly one ask, one result to review, one receipt (returned work), or one host request (permission or error). Each agent card has its own recall (`timeline`) about that thing; host cards have none. A session can have any number of open cards; the overview groups them under the session (its `topic`, agent line, oldest wait), a child session nested under the session that started it. Send, Seen and Dismiss act on one card. Filing the same line again updates that card; `replaces` swaps an open card for a new one. Cards filed before this (several items on one card) are kept as they are and shown in their older layout.
+- **One card is one thing for the user**: exactly one ask, one result to review, one receipt (returned work), or one host request (permission or error). Each agent card has its own recall (`timeline`) about that thing; host cards have none. A session can have any number of open cards; the overview groups them under the session (its `topic`, agent line, oldest wait), a child session nested under the session that started it, and the sessions under their workspace. It stays one screen: workspace rows and session headers fold in place, nothing opens another screen. Send, Seen and Dismiss act on one card. Filing the same line again updates that card; `replaces` swaps an open card for a new one. Cards filed before this (several items on one card) are kept as they are and shown in their older layout.
 - Dispatched work that comes back is a card too (a *receipt* card of the dispatching session).
 - Running work is **not** in the inbox body; only a collapsed `Running N` row lists registered dispatches.
 - No model-based classifier: what reaches the inbox is what agents and host events file.
@@ -110,23 +110,30 @@ Sidebar header row: `Inbox 3` (count of open cards; muted when 0).
 
 ```
 Inbox 8                                        › Running 2
-Docs redesign                                         4h   session header: topic · oldest wait
-✻ Claude Work · Opus 5.5 · high · main  🗀 docs-site       agent line, muted
-┌──────────────────────────────────────────────────────┐
-│ Docs site: ship the new navigation?     [Discussing] │  the item's line (tap → detail); tag
-│ You asked ● 11/10 Redesign the docs navigation       │
-│ It did    ● 11/12 3 branches built and tested        │  up to two lines each
-│ Blocked   ● Your call on shipping                    │  dot in the status color
-│ [Ship to all] [✓ Behind a flag] [Hold…] [Discuss] [Send]  recommended preselected
-└──────────────────────────────────────────────────────┘
-┌ Before/after comparison · recall · Biggest change… ↗  [Discuss] [Seen] ┐  result: look, ↗ opens / ⧉ copies
-Flaky CI                                              3h
-…
-│  CI bisect                                         2h   child session, nested one level
-│  ✻ Claude · Sonnet 5.5 · high · child of Flaky CI
-│  ┌ Bisect the flaky upload test · recall · ✓ line [Discuss] [Seen] ┐  receipt: line
-Prepare the 2.4 release                              40m
-┌ Bash · Push the release branch to GitHub  [Deny] [Accept] ┐  host card: no recall
+⌄ ● docs-site                 1 session · 4 waiting   4h   workspace row: status dot, counts, oldest wait
+  ⌄ Docs redesign                                     4h   session header: topic · oldest wait
+    ✻ Claude Work · Opus 5.5 · high · main  🗀 docs-site   agent line, muted
+  ┌────────────────────────────────────────────────────┐
+  │ Docs site: ship the new navigation?   [Discussing] │  the item's line (tap → detail); tag
+  │ You asked ● 11/10 Redesign the docs navigation     │
+  │ It did    ● 11/12 3 branches built and tested      │  up to two lines each
+  │ Blocked   ● Your call on shipping                  │  dot in the status color
+  │ [Ship to all] [✓ Behind a flag] [Hold…] [Discuss] [Send]  recommended preselected
+  └────────────────────────────────────────────────────┘
+  ┌ Before/after comparison · recall · Biggest change… ↗  [Discuss] [Seen] ┐  result: look, ↗ opens / ⧉ copies
+⌄ ● api-server  2 sessions · 4 waiting · 1 permission   3h   a pending permission, in the warning color
+  › Flaky CI                               3 waiting   3h   folded session: its cards, children's included
+    ✻ Claude · Opus 5.5 · xhigh · main  🗀 api-server
+  ⌄ Prepare the 2.4 release                           40m
+  ┌ Bash · Push the release branch to GitHub  [Deny] [Accept] ┐  host card: no recall
+› ● mobile-app                1 session · 3 waiting   2h   folded workspace: the row alone
+
+(Flaky CI unfolded:)
+  ⌄ Flaky CI                                          3h
+  …
+  │  ⌄ CI bisect                                      2h   child session, nested one level
+  │    ✻ Claude · Sonnet 5.5 · high · child of Flaky CI
+  │  ┌ Bisect the flaky upload test · recall · ✓ line [Discuss] [Seen] ┐  receipt: line
 
 ‹ Inbox                                            4h   (one card)
 Docs redesign
@@ -139,7 +146,10 @@ full question · whyNow · options with effect, recommended + why
 ```
 
 - Groups: open cards grouped by `host + sessionId`, in the order of each group's oldest `firstReadyAt` (children included); cards inside in queue order. A child session (parent from the latest card's `agent.parentSessionId`, the host's `paseo.parent-agent-id` label, else a track whose `childRef` is the session) nests under the top of its parent chain, one level deep. A parent with no open cards still gets its header, muted, named by `sessionTitles` (its last topic, else the host's title). A chain that loops leaves each session at the top.
-- Group header: the latest card's `topic` (else the session title), the group's own oldest wait, the agent line of its latest card.
+- Workspaces: session groups grouped by the workspace of the session's latest card (for a parent with no open cards, of its children's latest card), named as in the agent line: the Paseo workspace `name`, else the cwd with home as `~`, else `No workspace`. A child stays under its parent even when it runs in another workspace: lineage wins. Workspaces are ordered by their oldest card's `firstReadyAt`; sessions keep their order inside, indented under the row.
+- Workspace row: a chevron, one status dot, the name, `N session(s) · M waiting`, the oldest wait. `N` counts top-level sessions (a child counts with its parent); `M` counts every open card under it. When a permission request is pending, `· 1 permission` follows in the warning color, so a folded workspace does not hide it. The dot shows the most pressing card: a pending permission, else a decision (an ask, a failed turn included), both in the warning color; else review or returned work, in the accent. On a phone the counts go on a second line under the name.
+- Group header: a chevron, the latest card's `topic` (else the session title), the group's own oldest wait, the agent line of its latest card.
+- Folding: tapping a workspace row or a session header's title row folds it; a folded workspace shows the row alone, a folded session its header with `M waiting` (its cards and its children's), a pending permission as on the workspace row, and the oldest wait among them. Up to 10 open cards everything starts expanded; above 10 every workspace starts folded; session headers start expanded. What the user folds or opens is kept per workspace and session key (`workspace:<name>`, `session:<host>:<id>`) for the life of the client, in memory in the screen module: Paseo gives a plugin screen no storage on the device (plugin settings live on the daemon and are shared by every device; tab state is for panels). Folding changes only what is shown: the sidebar count, the header count and every row's counts cover all open cards.
 - Item card: the line (`short`, result `label`, receipt `title`; a host request or error in its status color, two lines at most) with the muted `Discussing` tag beside it on a card under discussion, the three recall steps (two lines each; none on host cards and cards without a timeline), then:
   - ask with options: chips (tap picks, tap again clears; the recommended one starts picked), the picked option's `effect`, `Discuss`, and `Send` (filled; enabled once something is picked). An ask with nothing to pick shows `Discuss` and `Reply ›`, which opens the detail;
   - result: the `look` (else `note`, else the link) with ↗ for a URL (opens) or ⧉ for an absolute path (copies), `Discuss` and `Seen`;

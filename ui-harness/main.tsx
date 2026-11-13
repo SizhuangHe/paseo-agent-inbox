@@ -38,6 +38,7 @@ const THEMES = {
 // &copy=fail makes copying a path fail, as over plain http without the textarea fallback;
 // &revealed=<cardId> starts that card with its path shown, as after a failed copy;
 // &external=1 shows Open session and Discuss on cards from an external host, as when AGENT_INBOX_EXTERNAL_URL is set.
+// &fold=<key> starts a workspace row (workspace:<name>) or session header (session:<host>:<id>) folded, &unfold=<key> open.
 const params = new URLSearchParams(location.search);
 const card = params.get("card");
 const expand = params.get("expand");
@@ -47,6 +48,10 @@ const permState = perm.slice(perm.lastIndexOf(":") + 1);
 const permKey = permAsk.includes("/") ? permAsk : card ? `${card}/${permAsk}` : null;
 const copyFails = params.get("copy") === "fail";
 const revealed = params.getAll("revealed");
+const folds = new Map<string, boolean>([
+  ...params.getAll("fold").map((key) => [key, true] as const),
+  ...params.getAll("unfold").map((key) => [key, false] as const),
+]);
 const theme = THEMES[params.get("theme") === "light" ? "light" : "dark"];
 document.body.style.backgroundColor = theme.colors.surface0;
 
@@ -74,5 +79,6 @@ createRoot(document.getElementById("root") as never).render(
       return Promise.resolve(!copyFails);
     }}
     defaultRevealed={revealed}
+    folds={folds}
   />,
 );

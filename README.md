@@ -14,6 +14,7 @@ A [Paseo](https://paseo.sh) plugin that gives you one inbox for everything your 
 - **Seen** closes results and returned work; **Dismiss** tells the agent not to wait for an answer; **Later** moves a card to the end.
 - **Discuss** asks the card's session to explain it in a few plain sentences and wait, then opens the session; the card stays open, tagged *Discussing*, until the agent closes it once you decide there.
 - Cards grouped by session, with child sessions nested under the session that started them.
+- Sessions grouped by workspace on one screen; workspaces and sessions fold, and a folded workspace still shows its counts and any pending permission.
 - A **Running** list of dispatched work; when a tracked `paseo run` child finishes, its result is filed automatically.
 - Works on desktop and phone, in Paseo's light and dark themes.
 
@@ -103,12 +104,12 @@ The UI harness renders the real inbox component with react-native-web from a see
 
 ```sh
 cd ui-harness && npm ci
-node seed-demo.mjs /tmp/inbox-demo.db              # --with-legacy adds an older multi-item card
+node seed-demo.mjs /tmp/inbox-demo.db              # --with-legacy: an older multi-item card; --more: past 10 cards, so it starts folded
 AGENT_QUEUE_DB=/tmp/inbox-demo.db AQ_NOW=2026-11-12T19:00:00Z AQ_HOME=/home/demo node build.mjs
 node shoot.mjs /tmp/overview.png 390 3 1 "compact=1"   # <out> <width> <scale> <mobile> [query]
 ```
 
-Query parameters: `compact=1`, `theme=light`, `card=<id>` (detail), `running=1`, `external=1`; see `ui-harness/main.tsx`. The design notes are in [`docs/design.md`](docs/design.md).
+Query parameters: `compact=1`, `theme=light`, `card=<id>` (detail), `running=1`, `external=1`, `fold=<key>` / `unfold=<key>` (`workspace:<name>`, `session:<host>:<id>`); see `ui-harness/main.tsx`. The design notes are in [`docs/design.md`](docs/design.md).
 
 ## Limitations
 
