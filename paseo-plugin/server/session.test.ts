@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { PaseoAgent, PaseoApi, PaseoProviderSnapshotResult } from "@getpaseo/client";
+import type { PaseoAgent, PaseoApi, PaseoProviderSnapshotResult } from "./host.ts";
 import { agentMeta, providerInfo, sessionSnapshot } from "./session.ts";
 
 const thinking = [

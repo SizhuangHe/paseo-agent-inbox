@@ -4,7 +4,7 @@ A [Paseo](https://paseo.sh) plugin that gives you one inbox for everything your 
 
 | Overview (desktop) | Overview (phone, light) | One card (phone) |
 |---|---|---|
-| ![Overview on desktop](docs/screenshots/overview-desktop.png) | ![Overview on a phone](docs/screenshots/overview-phone.png) | ![Card detail on a phone](docs/screenshots/card-detail-phone.png) |
+| ![Overview on desktop](paseo-plugin/assets/overview-desktop.png) | ![Overview on a phone](paseo-plugin/assets/overview-phone.png) | ![Card detail on a phone](paseo-plugin/assets/card-detail-phone.png) |
 
 ## Features
 
@@ -21,8 +21,9 @@ A [Paseo](https://paseo.sh) plugin that gives you one inbox for everything your 
 ## Requirements
 
 - Paseo 0.15.3 or later, with plugins enabled on the daemon (Settings → Plugins).
-- Node 25 or later on the daemon host (the `engines` field; tested on 25.9). The store uses the built-in `node:sqlite`, and the CLI runs its TypeScript source directly. Older Node versions are untested.
-- npm, to install the plugin's dependencies.
+- Node.js 22.13 or later on the daemon host (23.4 or later on Node 23), for the built-in `node:sqlite` that the store uses. Tested on 22.13 and 25.9.
+- Node 25 or later for the CLI and the tests, which run their TypeScript source directly (the root `engines` field).
+- npm on the daemon's command path, for the install step.
 
 ## Install
 
@@ -36,7 +37,7 @@ paseo plugin ls            # agent-queue should be running
 
 If it shows as disabled, run `paseo plugin enable agent-queue`. Open sessions pick up the tools when Paseo reopens them, before their next prompt. The **Inbox** row appears in the sidebar.
 
-Paseo can also install from Git: `paseo plugin install github:<owner>/paseo-agent-inbox:paseo-plugin`. The manifest's `build` step runs `npm ci` in the plugin directory.
+Paseo can also install from Git: `paseo plugin install github:<owner>/paseo-agent-inbox:paseo-plugin`. The manifest's `build` step runs `npm ci --omit=dev --ignore-scripts` in the plugin directory, which only links `core/` from the same checkout.
 
 ## How agents use it
 
@@ -90,7 +91,7 @@ Environment variables, which the plugin reads from the environment the Paseo dae
 
 ## Where data lives
 
-One SQLite file (WAL mode), `~/.local/share/agent-queue/queue.db` unless `AGENT_QUEUE_DB` says otherwise. It holds the cards and the dispatch tracks, open and closed. The plugin and the CLI share it; each write runs in its own transaction, so several processes can use it at once. Schema migrations run when the file is opened and only add columns. Nothing leaves the machine: the plugin's MCP server listens on 127.0.0.1 with a per-session token.
+One SQLite file (WAL mode), `~/.local/share/agent-queue/queue.db` unless `AGENT_QUEUE_DB` says otherwise. It holds the cards and the dispatch tracks, open and closed. The plugin and the CLI share it; each write runs in its own transaction, so several processes can use it at once. Schema migrations run when the file is opened and only add columns. Besides its MCP server, which listens on 127.0.0.1 with a per-session token, the plugin opens no network connections. The messages it sends into sessions, and the agents' calls to the inbox tools, go to each session's agent provider like the rest of the conversation.
 
 ## Development
 

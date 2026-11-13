@@ -2,6 +2,7 @@
   "id": "agent-queue",
   "name": "Agent inbox",
   "description": "An inbox of cards for what needs you next: decisions and results that agents file, permission requests, and dispatched work that came back.",
+  "media": ["assets/overview-desktop.png", "assets/overview-phone.png", "assets/card-detail-phone.png"],
   "requirements": { "paseo": ">=0.15.3" },
-  "build": [["npm", "ci"]]
+  "build": [["npm", "ci", "--omit=dev", "--ignore-scripts"]]
 }

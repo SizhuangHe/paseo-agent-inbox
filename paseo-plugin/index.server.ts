@@ -1,10 +1,10 @@
 import { homedir } from "node:os";
-import type { PaseoApi } from "@getpaseo/client";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { Queue, QueueInputError } from "agent-inbox-core";
 import { answerCard, discussCard, dismissCard } from "./server/answer";
 import { onPermissionAfter, onPermissionBefore, onTurnAfter } from "./server/hooks";
+import type { PaseoApi } from "./server/host";
 import { QueueMcpServer } from "./server/mcp";
 import { answerPermission as answerPermissionRequest } from "./server/permissions";
 import { TitleCache } from "./server/session";
