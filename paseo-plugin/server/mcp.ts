@@ -6,11 +6,11 @@
 //
 // Each session gets its own URL (/mcp/<agentId>) and a bearer token derived from the agent id,
 // so the session identity comes from the launch configuration, never from the agent's input.
-import type { PaseoApi } from "@getpaseo/client";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { z } from "zod";
+import type { PaseoApi } from "./host";
 import type { QueueTool } from "./tools";
 
 const SUPPORTED_PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"];

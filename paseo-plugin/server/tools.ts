@@ -1,10 +1,10 @@
 // Agent tools: queue_add, queue_track, queue_resolve. Session identity always comes from the
 // MCP endpoint the plugin gave that session at launch, never from the agent's input. Schemas use
 // core's LIMITS and countSentences, and core validates again, so tools and CLI share the rules.
-import type { PaseoApi } from "@getpaseo/client";
 import { charCount, countSentences, displayWidth, isHref, LIMITS, QueueInputError, soleItem, TIMELINE_DATE, WIDTHS } from "agent-inbox-core";
 import type { Card, Filing, Queue, Track } from "agent-inbox-core";
 import { z } from "zod";
+import type { PaseoApi } from "./host.ts";
 import { sessionSnapshot } from "./session.ts";
 
 const oneLine = (max: number) =>

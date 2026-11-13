@@ -1,10 +1,10 @@
 // Deterministic queue updates from Paseo lifecycle events: dispatched children coming back,
 // permission requests, and failed turns. No agent involvement.
-import type { PaseoApi } from "@getpaseo/client";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { PluginHookEvents } from "@getpaseo/plugin/server";
 import { SYSTEM_ASK_PREFIX } from "agent-inbox-core";
 import type { Queue } from "agent-inbox-core";
+import type { PaseoApi } from "./host.ts";
 import { permissionInfo } from "./permissions.ts";
 import { lastAssistantParagraph, sessionSnapshot } from "./session.ts";
 

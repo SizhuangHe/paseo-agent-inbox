@@ -1,9 +1,8 @@
 // Reads Paseo session details for cards: snapshot fields and the last assistant paragraph.
-import type { PaseoAgent, PaseoApi, PaseoProviderSnapshotResult } from "@getpaseo/client";
-import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { PluginHookAgent } from "@getpaseo/plugin/server";
 import type { AgentMeta, SessionSnapshot } from "agent-inbox-core";
+import { PARENT_AGENT_ID_LABEL, type PaseoAgent, type PaseoApi, type PaseoProviderSnapshotResult } from "./host.ts";
 
 const LOOKUP_TIMEOUT_MS = 5_000;
 const PROVIDERS_TTL_MS = 10 * 60_000;
